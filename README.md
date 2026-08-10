@@ -59,8 +59,23 @@ SUPABASE_SERVICE_ROLE_KEY=sua-chave-service-role
 Para enviar disparos prontos ao Google Calendar via n8n, adicione tambem:
 
 ```txt
-N8N_CALENDAR_WEBHOOK_URL=https://seu-n8n/webhook/google-calendar-disparos
+N8N_CALENDAR_WEBHOOK_URL=https://seu-n8n/webhook/seu-caminho-do-webhook
 ```
+
+Se o webhook do n8n usar autenticacao por header, configure tambem:
+
+```txt
+N8N_CALENDAR_WEBHOOK_SECRET_HEADER=X-Webhook-Secret
+N8N_CALENDAR_WEBHOOK_SECRET=SEU_SEGREDO_FORTE_DO_WEBHOOK
+```
+
+Opcionalmente, ajuste o timeout da chamada ao n8n:
+
+```txt
+N8N_CALENDAR_WEBHOOK_TIMEOUT_MS=15000
+```
+
+Nunca coloque `.env`, tokens, chaves do Supabase, URL operacional real do webhook ou segredo do n8n em arquivos versionados. Use `.env.example` apenas como modelo com placeholders.
 
 ## Banco novo
 
@@ -132,6 +147,33 @@ O schema cria a funcao segura `public.is_allowed_user()` para centralizar essa v
 ## Producao
 
 Para usar fora da maquina local, hospede o backend Node em um servidor com variaveis de ambiente seguras e publique o frontend com `npm run build`. Em producao, use `SUPABASE_SERVICE_ROLE_KEY` apenas no backend, nunca no navegador.
+
+## Seguranca de configuracao
+
+A chamada ao n8n fica centralizada no backend em `POST /api/integrations/n8n/calendar`. O frontend nunca recebe a URL operacional do webhook nem o segredo configurado em `N8N_CALENDAR_WEBHOOK_SECRET`.
+
+Variaveis esperadas:
+
+| Variavel | Obrigatoria | Onde usar | Observacao |
+| --- | --- | --- | --- |
+| `SUPABASE_URL` | Sim | Backend | URL do projeto Supabase. |
+| `SUPABASE_PUBLISHABLE_KEY` ou `SUPABASE_ANON_KEY` | Sim | Backend | Chave publica usada para autenticar chamadas ao Supabase. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Opcional | Backend | Use apenas no backend e somente quando necessario. |
+| `N8N_CALENDAR_WEBHOOK_URL` | Sim para Google Calendar | Backend | URL operacional real do webhook. Nunca versionar. |
+| `N8N_CALENDAR_WEBHOOK_SECRET_HEADER` | Opcional | Backend | Nome do header de autenticacao; padrao: `X-Webhook-Secret`. |
+| `N8N_CALENDAR_WEBHOOK_SECRET` | Opcional | Backend | Segredo/token enviado ao n8n por header. Nunca versionar. |
+| `N8N_CALENDAR_WEBHOOK_TIMEOUT_MS` | Opcional | Backend | Tempo limite da chamada ao n8n; padrao: `15000`. |
+
+Antes de gerar um ZIP do projeto, confira se estes itens nao entraram no pacote:
+
+- `.env`
+- `node_modules/`
+- `dist/`
+- `server.stdout.log`
+- `server.stderr.log`
+- qualquer arquivo exportado do n8n contendo credenciais reais
+
+Recomendacao de rotacao: se uma URL real de webhook ou segredo ja foi compartilhado em conversa, print, ZIP, historico antigo ou ambiente fora do servidor, crie um novo caminho de webhook no n8n e um novo segredo forte, atualize o `.env` do servidor e desative o webhook/segredo antigo. Nao registre o valor antigo em codigo, README, issue, commit ou mensagem de erro.
 
 ## Rotas do backend
 

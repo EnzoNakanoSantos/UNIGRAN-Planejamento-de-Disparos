@@ -18,7 +18,10 @@ loadEnvFile(path.join(ROOT, '.env'));
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_READY = Boolean(SUPABASE_URL && SUPABASE_KEY);
-const N8N_CALENDAR_WEBHOOK_URL = process.env.N8N_CALENDAR_WEBHOOK_URL || '';
+const N8N_CALENDAR_WEBHOOK_URL = (process.env.N8N_CALENDAR_WEBHOOK_URL || '').trim();
+const N8N_CALENDAR_WEBHOOK_SECRET = (process.env.N8N_CALENDAR_WEBHOOK_SECRET || '').trim();
+const N8N_CALENDAR_WEBHOOK_SECRET_HEADER = (process.env.N8N_CALENDAR_WEBHOOK_SECRET_HEADER || 'X-Webhook-Secret').trim();
+const N8N_CALENDAR_WEBHOOK_TIMEOUT_MS = Number(process.env.N8N_CALENDAR_WEBHOOK_TIMEOUT_MS || 15000);
 
 const TABLES = {
   allowedUsers: 'allowed_users',
@@ -73,6 +76,47 @@ function safeJsonParse(text) {
   } catch {
     return null;
   }
+}
+
+function safePositiveInteger(value, fallback) {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function n8nWebhookHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (N8N_CALENDAR_WEBHOOK_SECRET) {
+    headers[N8N_CALENDAR_WEBHOOK_SECRET_HEADER || 'X-Webhook-Secret'] = N8N_CALENDAR_WEBHOOK_SECRET;
+  }
+  return headers;
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), safePositiveInteger(timeoutMs, 15000));
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    const text = await response.text();
+    return {
+      response,
+      text,
+      data: safeJsonParse(text)
+    };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('n8n: tempo limite excedido ao chamar o webhook.');
+    }
+    throw new Error('n8n: nao foi possivel chamar o webhook configurado.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function safeWebhookErrorMessage(data) {
+  const message = data?.error || data?.message || data?.errorMessage || '';
+  return String(message || 'Falha ao enviar webhook.').slice(0, 300);
 }
 
 function friendlySupabaseError(status, text) {
@@ -461,17 +505,18 @@ async function sendCalendarWebhook(body, user) {
     events: [event]
   };
 
-  const response = await fetch(N8N_CALENDAR_WEBHOOK_URL, {
+  const { response, data } = await fetchJsonWithTimeout(N8N_CALENDAR_WEBHOOK_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: n8nWebhookHeaders(),
     body: JSON.stringify(payload)
-  });
-
-  const text = await response.text();
-  const data = safeJsonParse(text);
+  }, N8N_CALENDAR_WEBHOOK_TIMEOUT_MS);
 
   if (!response.ok) {
-    throw new Error(`n8n ${response.status}: ${data?.error || data?.message || text || 'Falha ao enviar webhook.'}`);
+    throw new Error(`n8n ${response.status}: ${safeWebhookErrorMessage(data)}`);
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('n8n: resposta invalida do webhook. Configure o workflow para responder JSON.');
   }
 
   const returnedEventId = String(data?.eventId || data?.googleEventId || '').trim();
@@ -493,7 +538,7 @@ async function sendCalendarWebhook(body, user) {
     sent: 1,
     eventId: nextEventId,
     revision: refreshedState.revision,
-    response: data || text || null
+    response: data
   };
 }
 
