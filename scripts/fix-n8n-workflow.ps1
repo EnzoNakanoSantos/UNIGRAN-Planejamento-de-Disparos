@@ -2,7 +2,13 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$SourcePath,
   [Parameter(Mandatory = $true)]
-  [string]$DestinationPath
+  [string]$DestinationPath,
+  [Parameter(Mandatory = $true)]
+  [string]$GoogleCalendarId,
+  [Parameter(Mandatory = $false)]
+  [string]$GoogleCalendarCredentialId = '',
+  [Parameter(Mandatory = $false)]
+  [string]$GoogleCalendarCredentialName = 'Google Calendar account'
 )
 
 $workflow = Get-Content -LiteralPath $SourcePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -49,7 +55,7 @@ $findDeleteNode = [pscustomobject]@{
     operation = 'getAll'
     calendar = [pscustomobject]@{
       __rl = $true
-      value = 'c_511395219e86539d0f04480b58630bc61f45cff6defc6ba5bd329c3b633e983c@group.calendar.google.com'
+      value = $GoogleCalendarId
       mode = 'id'
     }
     limit = 10
@@ -64,8 +70,8 @@ $findDeleteNode = [pscustomobject]@{
   name = 'Find events to delete'
   credentials = [pscustomobject]@{
     googleCalendarOAuth2Api = [pscustomobject]@{
-      id = 'o1SjjAy43bdrrKjr'
-      name = 'Google Calendar account'
+      id = $GoogleCalendarCredentialId
+      name = $GoogleCalendarCredentialName
     }
   }
 }
@@ -75,7 +81,7 @@ $deleteNode = [pscustomobject]@{
     operation = 'delete'
     calendar = [pscustomobject]@{
       __rl = $true
-      value = 'c_511395219e86539d0f04480b58630bc61f45cff6defc6ba5bd329c3b633e983c@group.calendar.google.com'
+      value = $GoogleCalendarId
       mode = 'id'
     }
     eventId = '={{$json.id}}'
@@ -88,8 +94,8 @@ $deleteNode = [pscustomobject]@{
   name = 'Delete an event'
   credentials = [pscustomobject]@{
     googleCalendarOAuth2Api = [pscustomobject]@{
-      id = 'o1SjjAy43bdrrKjr'
-      name = 'Google Calendar account'
+      id = $GoogleCalendarCredentialId
+      name = $GoogleCalendarCredentialName
     }
   }
 }
