@@ -71,6 +71,32 @@ export type Validation = {
   issues: string[];
 };
 
+export type Tab = 'email' | 'whatsapp' | 'html_email' | 'calendar' | 'bases' | 'catalogs';
+export type Modal = 'dispatch' | 'dispatchDetails' | 'calendarDay' | 'base' | null;
+export type CatalogKey = 'campaigns' | 'audiences' | 'responsibles';
+export type FilterState = {
+  q: string;
+  start: string;
+  end: string;
+  campaign: string;
+  audience: string;
+  status: string;
+  base: string;
+  responsible: string;
+  validation: string;
+  pending: boolean;
+  sent: boolean;
+  alert: boolean;
+  overlap: boolean;
+  missingBase: boolean;
+  staleBase: boolean;
+  readyOnly: boolean;
+};
+export type FilterKey = keyof FilterState;
+export type BaseSort = 'name' | 'date-desc' | 'date-asc';
+export type DispatchSortField = 'dispatchDate' | 'createdAt' | 'updatedAt';
+export type SortDirection = 'asc' | 'desc';
+
 export const STATUS: DispatchStatus[] = [
   'Planejado',
   'Em produção',

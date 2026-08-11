@@ -2,104 +2,10 @@ import type { FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentUser, loadState, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
 import { addDaysISO, baseValidation, dispatchValidation, fmtDate, isBaseStale, overlapMap, todayISO, uid } from './logic';
-import { AppState, BaseRule, Dispatch, DispatchChannel, DispatchChip, DispatchStatus, FileAttachment, STATUS } from './types';
-
-type Tab = 'email' | 'whatsapp' | 'html_email' | 'calendar' | 'bases' | 'catalogs';
-type Modal = 'dispatch' | 'dispatchDetails' | 'calendarDay' | 'base' | null;
-type CatalogKey = 'campaigns' | 'audiences' | 'responsibles';
-type FilterState = {
-  q: string;
-  start: string;
-  end: string;
-  campaign: string;
-  audience: string;
-  status: string;
-  base: string;
-  responsible: string;
-  validation: string;
-  pending: boolean;
-  sent: boolean;
-  alert: boolean;
-  overlap: boolean;
-  missingBase: boolean;
-  staleBase: boolean;
-  readyOnly: boolean;
-};
-type FilterKey = keyof FilterState;
-type BaseSort = 'name' | 'date-desc' | 'date-asc';
-type DispatchSortField = 'dispatchDate' | 'createdAt' | 'updatedAt';
-type SortDirection = 'asc' | 'desc';
-
-const defaultFilters = (): FilterState => ({
-  q: '',
-  start: '',
-  end: '',
-  campaign: '',
-  audience: '',
-  status: '',
-  base: '',
-  responsible: '',
-  validation: '',
-  pending: false,
-  sent: false,
-  alert: false,
-  overlap: false,
-  missingBase: false,
-  staleBase: false,
-  readyOnly: false
-});
-
-const emptyDispatch = (channel: DispatchChannel = 'email'): Dispatch => ({
-  id: '',
-  channel,
-  date: todayISO(),
-  time: '',
-  templateName: '',
-  chip: '',
-  htmlContent: '',
-  subject: '',
-  body: '',
-  attachments: [],
-  campaign: '',
-  audience: '',
-  description: '',
-  status: 'Planejado',
-  baseId: '',
-  responsible: '',
-  googleCalendarEventId: '',
-  createdAt: '',
-  updatedAt: ''
-});
-
-const emptyBase = (): BaseRule => ({
-  id: '',
-  campaign: '',
-  mainBase: '',
-  excludedBases: '',
-  expectedAction: '',
-  lastUpdated: todayISO(),
-  responsible: '',
-  notes: '',
-  spreadsheetAttachment: null
-});
-
-const DISPATCH_FORM_STATUS: DispatchStatus[] = [
-  'Planejado',
-  'Em produção',
-  'Pronto para disparo'
-];
-const CHIP_OPTIONS: DispatchChip[] = ['EAD', 'DOU', 'CGR', 'U.S.A'];
-const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024;
-const EXCEL_TYPES = [
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-];
-const AUTH_STORAGE_KEY = 'unigran-disparos-session';
-const RESPONSIBLE_BY_EMAIL: Record<string, string> = {
-  'mktdigital02.ead@unigran.br': 'Enzo Nakano',
-  'mktdigital01.ead@unigran.br': 'Raquel Kuhnen',
-  'mktdigital06.ead@unigran.br': 'Matheus Salazar'
-};
+import { AUTH_STORAGE_KEY, CHIP_OPTIONS, DISPATCH_FORM_STATUS, EXCEL_TYPES, MAX_ATTACHMENT_SIZE, RESPONSIBLE_BY_EMAIL } from './config/dispatch';
+import { emptyBase, emptyDispatch, defaultFilters } from './utils/factories';
+import type { AppState, BaseRule, BaseSort, CatalogKey, Dispatch, DispatchChannel, DispatchChip, DispatchSortField, DispatchStatus, FileAttachment, FilterKey, Modal, SortDirection, Tab } from './types';
+import { STATUS } from './types';
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
