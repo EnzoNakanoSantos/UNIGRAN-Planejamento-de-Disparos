@@ -1,0 +1,204 @@
+.catalogGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+
+.catalogCard {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.catalogHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.catalogHead h3 {
+  margin: 0;
+  color: var(--blue-dark);
+}
+
+.catalogHead p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.catalogHead span {
+  min-width: 34px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: #eaf2fc;
+  color: var(--blue-dark);
+  font-weight: 900;
+  text-align: center;
+}
+
+.catalogForm,
+.catalogEdit {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.catalogEdit {
+  width: 100%;
+  grid-template-columns: 1fr auto auto;
+  padding: 0;
+}
+
+.catalogForm input,
+.catalogTools input,
+.catalogTools select,
+.catalogDateFilters input,
+.catalogEdit input {
+  min-width: 0;
+  border: 1px solid #c9d7e6;
+  border-radius: 9px;
+  padding: 10px 11px;
+}
+
+.catalogTools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
+.catalogDateFilters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
+.catalogDateFilters label {
+  display: grid;
+  gap: 5px;
+}
+
+.catalogDateFilters span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.catalogBulk {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+.catalogBulk label,
+.catalogSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--blue-dark);
+  font-weight: 900;
+}
+
+.catalogBulk input,
+.catalogSelect input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--green);
+}
+
+.confirmStrip {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 14px;
+  padding: 12px;
+  border: 1px solid #f2b6b6;
+  border-radius: 10px;
+  background: #fff6f6;
+}
+
+.confirmStrip strong {
+  color: #9a2020;
+}
+
+.confirmStrip span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.confirmStrip div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.catalogList {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.catalogItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px;
+  border: 1px solid #e3edf7;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease), transform 0.18s var(--ease);
+}
+
+.catalogItem:hover {
+  border-color: #c9dced;
+  box-shadow: 0 8px 18px rgba(2, 58, 120, 0.08);
+  transform: translateY(-1px);
+}
+
+.catalogItem strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.catalogDates {
+  grid-column: 1;
+  margin-left: 26px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.catalogItem .actions {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.catalogSelect strong {
+  min-width: 0;
+}
+
+.smallEmpty {
+  padding: 18px;
+}
+
+@media (max-width: 1100px) {
+  .catalogGrid {
+    grid-template-columns: 1fr;
+  }
+
+}
+

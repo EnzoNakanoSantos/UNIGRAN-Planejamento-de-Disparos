@@ -19,6 +19,8 @@ import { DispatchDetails } from './features/dispatches/DispatchDetails';
 import { Field, ModalFoot, ModalHead } from './components/modal/ModalParts';
 import { AttachmentPicker, SpreadsheetAttachmentPicker } from './components/forms/AttachmentPickers';
 import { IssueList, UpcomingList } from './features/dispatches/DashboardLists';
+import { useCalendar } from './features/calendar/useCalendar';
+import { useHeaderMenu } from './hooks/useHeaderMenu';
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
@@ -31,11 +33,10 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [tab, setTab] = useState<Tab>('email');
   const [modal, setModal] = useState<Modal>(null);
-  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const { headerMenuOpen, setHeaderMenuOpen } = useHeaderMenu();
   const [editingDispatch, setEditingDispatch] = useState<Dispatch>(emptyDispatch());
   const [viewingDispatch, setViewingDispatch] = useState<Dispatch | null>(null);
   const [viewingDispatchFromCalendar, setViewingDispatchFromCalendar] = useState(false);
-  const [viewingDay, setViewingDay] = useState('');
   const [editingBase, setEditingBase] = useState<BaseRule>(emptyBase());
   const [dispatchSortField, setDispatchSortField] = useState<DispatchSortField>('dispatchDate');
   const [dispatchSortDirection, setDispatchSortDirection] = useState<SortDirection>('asc');
@@ -46,7 +47,6 @@ export default function App() {
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
   const [filters, setFilters] = useState(defaultFilters);
-  const [calendarMonth, setCalendarMonth] = useState(todayISO().slice(0, 7));
   const [baseQuery, setBaseQuery] = useState('');
   const [baseSort, setBaseSort] = useState<BaseSort>('name');
 
@@ -77,26 +77,6 @@ export default function App() {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [modal, calendarDeleteTarget, calendarSyncing]);
-
-  useEffect(() => {
-    if (!headerMenuOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Element | null;
-      if (!target?.closest('.headerMenu')) setHeaderMenuOpen(false);
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setHeaderMenuOpen(false);
-    }
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [headerMenuOpen]);
 
   async function restoreSession() {
     const accessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || window.sessionStorage.getItem(AUTH_STORAGE_KEY);
@@ -349,18 +329,7 @@ export default function App() {
       return `${a.mainBase} ${a.campaign}`.localeCompare(`${b.mainBase} ${b.campaign}`, 'pt-BR');
     });
   }, [baseQuery, baseSort, state.bases]);
-  const calendarDispatches = useMemo(
-    () => state.dispatches
-      .filter(item => item.date.startsWith(calendarMonth))
-      .sort((a, b) => `${a.date} ${a.time || '00:00'}`.localeCompare(`${b.date} ${b.time || '00:00'}`)),
-    [calendarMonth, state.dispatches]
-  );
-  const viewingDayDispatches = useMemo(
-    () => state.dispatches
-      .filter(item => item.date === viewingDay)
-      .sort((a, b) => `${a.time || '00:00'} ${a.campaign}`.localeCompare(`${b.time || '00:00'} ${b.campaign}`)),
-    [state.dispatches, viewingDay]
-  );
+  const { calendarMonth, setCalendarMonth, viewingDay, setViewingDay, calendarDispatches, viewingDayDispatches } = useCalendar(state.dispatches);
   const detailChannelDispatches = useMemo(
     () => viewingDispatch
       ? state.dispatches.filter(dispatch => (dispatch.channel || 'email') === (viewingDispatch.channel || 'email'))
