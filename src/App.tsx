@@ -28,6 +28,7 @@ export default function App() {
   const saveQueueRef = useRef(Promise.resolve());
   const saveVersionRef = useRef(0);
   const activeSavesRef = useRef(0);
+  const calendarOperationsRef = useRef(new Set<string>());
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -42,7 +43,6 @@ export default function App() {
   const [dispatchSortDirection, setDispatchSortDirection] = useState<SortDirection>('asc');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [calendarSyncing, setCalendarSyncing] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
@@ -69,14 +69,14 @@ export default function App() {
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (calendarDeleteTarget) {
-        if (!calendarSyncing) setCalendarDeleteTarget(null);
+        setCalendarDeleteTarget(null);
         return;
       }
       closeModal();
     }
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [modal, calendarDeleteTarget, calendarSyncing]);
+  }, [modal, calendarDeleteTarget]);
 
   async function restoreSession() {
     const accessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || window.sessionStorage.getItem(AUTH_STORAGE_KEY);
@@ -144,9 +144,11 @@ export default function App() {
       return;
     }
 
-    setCalendarSyncing(true);
+    if (calendarOperationsRef.current.has(dispatch.id)) return;
+    calendarOperationsRef.current.add(dispatch.id);
+
     setError('');
-    setSavedMessage('');
+    setSavedMessage('Disparo sincronizado com o Google Calendar.');
     try {
       const result = await sendCalendarToN8n(dispatch.id, session.accessToken, 'upsert');
       const current = stateRef.current;
@@ -160,11 +162,11 @@ export default function App() {
       setViewingDispatch(item => item?.id === dispatch.id
         ? { ...item, googleCalendarEventId: result.eventId }
         : item);
-      setSavedMessage('Disparo sincronizado com o Google Calendar.');
     } catch (err) {
+      setSavedMessage('');
       setError(err instanceof Error ? err.message : 'Não foi possível enviar ao n8n.');
     } finally {
-      setCalendarSyncing(false);
+      calendarOperationsRef.current.delete(dispatch.id);
     }
   }
 
@@ -173,28 +175,49 @@ export default function App() {
       setError('Faça login para remover o disparo do calendário.');
       return;
     }
-    setCalendarSyncing(true);
+    if (calendarOperationsRef.current.has(dispatch.id)) return;
+    calendarOperationsRef.current.add(dispatch.id);
+    const previousEventId = dispatch.googleCalendarEventId || '';
+
     setError('');
-    setSavedMessage('');
+    setCalendarDeleteTarget(null);
+    const current = stateRef.current;
+    setAppState({
+      ...current,
+      dispatches: current.dispatches.map(item => item.id === dispatch.id
+        ? { ...item, googleCalendarEventId: '' }
+        : item)
+    });
+    setViewingDispatch(item => item?.id === dispatch.id
+      ? { ...item, googleCalendarEventId: '' }
+      : item);
+    setSavedMessage('Disparo removido do Google Calendar pelo n8n.');
+
     try {
       const result = await sendCalendarToN8n(dispatch.id, session.accessToken, 'delete');
-      const current = stateRef.current;
+      const latest = stateRef.current;
       setAppState({
-        ...current,
+        ...latest,
         revision: result.revision,
-        dispatches: current.dispatches.map(item => item.id === dispatch.id
+        dispatches: latest.dispatches.map(item => item.id === dispatch.id
           ? { ...item, googleCalendarEventId: '' }
           : item)
       });
-      setViewingDispatch(item => item?.id === dispatch.id
-        ? { ...item, googleCalendarEventId: '' }
-        : item);
-      setCalendarDeleteTarget(null);
-      setSavedMessage('Disparo removido do Google Calendar pelo n8n.');
     } catch (err) {
+      const latest = stateRef.current;
+      setAppState({
+        ...latest,
+        dispatches: latest.dispatches.map(item => item.id === dispatch.id
+          ? { ...item, googleCalendarEventId: previousEventId }
+          : item)
+      });
+      setViewingDispatch(item => item?.id === dispatch.id
+        ? { ...item, googleCalendarEventId: previousEventId }
+        : item);
+      setSavedMessage('');
       setError(err instanceof Error ? err.message : 'Não foi possível enviar ao n8n.');
     } finally {
-      setCalendarSyncing(false);
+      calendarOperationsRef.current.delete(dispatch.id);
     }
   }
 
@@ -892,15 +915,14 @@ export default function App() {
                 type="button"
                 className="btn ghost"
                 onClick={() => sendDispatchToCalendar(viewingDispatch)}
-                disabled={calendarSyncing || viewingDispatch.status !== 'Pronto para disparo'}
+                disabled={viewingDispatch.status !== 'Pronto para disparo'}
               >
-                {calendarSyncing ? 'Sincronizando...' : 'Sincronizar Google Calendar'}
+                Sincronizar Google Calendar
               </button>
               <button
                 type="button"
                 className="btn ghost"
                 onClick={() => setCalendarDeleteTarget(viewingDispatch)}
-                disabled={calendarSyncing}
               >
                 Remover do Google Calendar
               </button>
@@ -984,9 +1006,7 @@ export default function App() {
       {calendarDeleteTarget && (
         <div
           className="modalBackdrop calendarDeleteBackdrop"
-          onMouseDown={() => {
-            if (!calendarSyncing) setCalendarDeleteTarget(null);
-          }}
+          onMouseDown={() => setCalendarDeleteTarget(null)}
         >
           <div
             className="calendarDeleteModal"
@@ -1013,7 +1033,6 @@ export default function App() {
               <button
                 type="button"
                 className="btn ghost"
-                disabled={calendarSyncing}
                 onClick={() => setCalendarDeleteTarget(null)}
               >
                 Cancelar
@@ -1021,10 +1040,9 @@ export default function App() {
               <button
                 type="button"
                 className="btn dangerStrong calendarDeleteButton"
-                disabled={calendarSyncing}
                 onClick={() => removeDispatchFromCalendar(calendarDeleteTarget)}
               >
-                {calendarSyncing ? 'Removendo...' : 'Sim, remover evento'}
+                Sim, remover evento
               </button>
             </div>
           </div>
