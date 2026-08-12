@@ -566,16 +566,53 @@ export default function App() {
     return <Login error={authError} onLogin={login} />;
   }
 
+  const pageTitle = tab === 'calendar'
+    ? 'Calendário'
+    : tab === 'bases'
+      ? 'Regras de bases'
+      : tab === 'catalogs'
+        ? 'Cadastros'
+        : `Disparos de ${channelName(activeChannel)}`;
+  const userInitials = (session.name || session.email)
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('');
+
   return (
-    <main className="app">
-      <header className="header">
-        <div>
-          <img className="brandLogo" src="/unigran-logo.png" alt="UNIGRAN" />
-          <h1>Planejamento de Disparos</h1>
-          <p>Controle de campanhas, públicos, bases de exclusão e validações antes do envio.</p>
-          <span className="sessionBadge">{session.email}</span>
+    <div className="appShell">
+      <aside className="sidebar">
+        <div className="sidebarBrand">
+          <span className="sidebarBrandMark">U</span>
+          <div><strong>UNIGRAN</strong><span>Planejamento</span></div>
         </div>
-        <div className="headerActions">
+        <nav className="sidebarNav" aria-label="Navegação principal">
+          <span className="sidebarNavLabel">DISPAROS</span>
+          <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => setTab('email')}><span aria-hidden="true">✉</span>E-mail</button>
+          <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => setTab('whatsapp')}><span aria-hidden="true">◉</span>WhatsApp</button>
+          <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => setTab('html_email')}><span aria-hidden="true">◇</span>E-mail HTML</button>
+          <span className="sidebarNavLabel">ORGANIZAÇÃO</span>
+          <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}><span aria-hidden="true">▦</span>Calendário</button>
+          <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => setTab('bases')}><span aria-hidden="true">◎</span>Regras de bases</button>
+          <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => setTab('catalogs')}><span aria-hidden="true">▤</span>Cadastros</button>
+        </nav>
+        <div className="sidebarUser">
+          <span className="sidebarAvatar">{userInitials || 'U'}</span>
+          <div><strong>{session.name || 'Usuário'}</strong><span>{session.email}</span></div>
+        </div>
+      </aside>
+
+      <main className="mainWorkspace">
+        <header className="topbar">
+          <div>
+            <p>Marketing &amp; Relacionamento</p>
+            <h1>{pageTitle}</h1>
+          </div>
+          <div className="topbarActions">
+            {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
+              <button className="btn primary topbarNew" onClick={() => openDispatch()}>＋ Novo disparo</button>
+            )}
           <details className="headerMenu" open={headerMenuOpen}>
             <summary
               aria-label="Abrir ações rápidas"
@@ -598,20 +635,13 @@ export default function App() {
               }}>Sair</button>
             </div>
           </details>
-        </div>
-      </header>
+          </div>
+        </header>
+
+        <div className="app">
 
       {error && <div className="error">{error}</div>}
       {savedMessage && !error && <div className="success">{savedMessage}</div>}
-
-      <nav className="tabs" aria-label="Navegação principal">
-        <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => setTab('email')}>Disparos de e-mail</button>
-        <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => setTab('whatsapp')}>Disparos de WhatsApp</button>
-        <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => setTab('html_email')}>E-mail HTML</button>
-        <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>Calendário</button>
-        <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => setTab('bases')}>Regras de bases</button>
-        <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => setTab('catalogs')}>Cadastros</button>
-      </nav>
 
       {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
         <>
@@ -1048,6 +1078,8 @@ export default function App() {
           </div>
         </div>
       )}
-    </main>
+        </div>
+      </main>
+    </div>
   );
 }

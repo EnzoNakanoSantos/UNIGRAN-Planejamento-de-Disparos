@@ -4,6 +4,7 @@ import App from './App';
 import './styles.css';
 import './features/auth/auth.css';
 import './features/catalogs/catalogs.css';
+import './design-v2.css';
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

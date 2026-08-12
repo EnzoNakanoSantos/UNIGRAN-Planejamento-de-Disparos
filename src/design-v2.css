@@ -1,0 +1,593 @@
+:root {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --text: #172033;
+  --muted: #6b7486;
+  --line: #e5e9f0;
+  --blue: #2558d9;
+  --blue-dark: #1746bb;
+  --yellow: #2558d9;
+  --green: #168455;
+  --red: #c33c49;
+  --orange: #aa6b00;
+  --shadow: 0 14px 40px rgba(25, 39, 69, 0.08);
+  --radius: 16px;
+  --sidebar-width: 244px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.appShell {
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  display: flex;
+  width: var(--sidebar-width);
+  flex-direction: column;
+  padding: 24px 16px 18px;
+  background: #111c35;
+  color: #fff;
+}
+
+.sidebarBrand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 26px;
+}
+
+.sidebarBrandMark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: #fff;
+  color: #16315e;
+  font-size: 19px;
+  font-weight: 900;
+}
+
+.sidebarBrand strong,
+.sidebarBrand span,
+.sidebarUser strong,
+.sidebarUser span {
+  display: block;
+}
+
+.sidebarBrand strong {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+.sidebarBrand div > span {
+  margin-top: 2px;
+  color: #9eabc5;
+  font-size: 12px;
+}
+
+.sidebarNav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sidebarNavLabel {
+  margin: 17px 12px 3px;
+  color: #71809e;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.sidebarNav button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: transparent;
+  color: #aeb9d0;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.sidebarNav button > span {
+  width: 22px;
+  color: #8fa2c8;
+  font-size: 17px;
+  text-align: center;
+}
+
+.sidebarNav button:hover {
+  background: #182747;
+  color: #fff;
+}
+
+.sidebarNav button.active {
+  background: #244a95;
+  color: #fff;
+  box-shadow: inset 3px 0 #82a8ff;
+}
+
+.sidebarNav button.active > span {
+  color: #fff;
+}
+
+.sidebarUser {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  margin-top: auto;
+  padding: 14px 8px 2px;
+  border-top: 1px solid #283650;
+}
+
+.sidebarAvatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: #d8e5ff;
+  color: #224889;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sidebarUser div {
+  min-width: 0;
+}
+
+.sidebarUser strong {
+  font-size: 12px;
+}
+
+.sidebarUser div > span {
+  overflow: hidden;
+  margin-top: 3px;
+  color: #92a0ba;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mainWorkspace {
+  width: calc(100% - var(--sidebar-width));
+  min-height: 100vh;
+  margin-left: var(--sidebar-width);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  min-height: 84px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 34px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.topbar p {
+  margin: 0 0 4px;
+  color: #8a94a6;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.topbar h1 {
+  margin: 0;
+  color: #18243a;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.topbarNew,
+.btn.primary,
+.newDispatchButton {
+  background: #2558d9;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(37, 88, 217, 0.2);
+}
+
+.topbarNew:hover:not(:disabled),
+.btn.primary:hover:not(:disabled),
+.newDispatchButton:hover:not(:disabled) {
+  background: #1746bb;
+  color: #fff;
+}
+
+.topbar .headerMenu summary {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #566178;
+  font-size: 18px;
+}
+
+.topbar .headerMenu[open] summary {
+  background: #eaf1ff;
+  color: #2558d9;
+}
+
+.app {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 28px 34px 48px;
+}
+
+.summary {
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.metric {
+  min-height: 102px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.metric::before {
+  content: "";
+  display: block;
+  width: 28px;
+  height: 4px;
+  margin-bottom: 12px;
+  border-radius: 20px;
+  background: #8eabef;
+}
+
+.metric.warning::before { background: #e5aa43; }
+.metric.risk::before { background: #dc7079; }
+
+.metric:hover {
+  border-color: #ccd6e8;
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+
+.metric span {
+  color: #707b8f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.metric strong {
+  margin-top: 4px;
+  color: #1c2940;
+  font-size: 26px;
+}
+
+.panel,
+.dailyPanel > div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.dailyPanel {
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.dailyPanel > div {
+  padding: 20px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panelHead {
+  margin-bottom: 16px;
+}
+
+.panelHead h2 {
+  color: #1c2940;
+  font-size: 18px;
+}
+
+.panelHead p {
+  color: #8a94a6;
+  font-size: 11px;
+}
+
+.filterToolbar {
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.filterBoard {
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.filterGroup {
+  border-color: var(--line);
+  background: #fff;
+}
+
+.filterGroup > span {
+  color: #788399;
+  letter-spacing: 0.07em;
+}
+
+.filterBoard input,
+.filterBoard select,
+.modal input,
+.modal select,
+.modal textarea {
+  border-color: #dfe4ec;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.filterBoard input:focus,
+.filterBoard select:focus,
+.modal input:focus,
+.modal select:focus,
+.modal textarea:focus {
+  border-color: #7fa0eb;
+  box-shadow: 0 0 0 3px rgba(37, 88, 217, 0.1);
+}
+
+.flags label.active {
+  border-color: #c8d8f8;
+  background: #eaf1ff;
+  color: #2859bd;
+}
+
+.dispatchList {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.dispatchBulk {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.tableWrap {
+  border: 0;
+  border-radius: 0;
+}
+
+.dispatchTable thead {
+  background: #f8fafc;
+}
+
+.dispatchTable th {
+  color: #758197;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dispatchTable td {
+  border-color: #edf0f4;
+  color: #3e4a60;
+  font-size: 12px;
+}
+
+.dispatchTable tbody tr:hover {
+  background: #f8faff;
+}
+
+.pill {
+  border: 0;
+  background: #eaf1ff;
+  color: #2859bd;
+}
+
+.calendarPanel {
+  padding: 20px;
+}
+
+.calendarActions {
+  padding: 4px;
+  border-radius: 11px;
+  background: #eef1f6;
+}
+
+.calendarActions strong {
+  min-width: 130px;
+  color: #25334c;
+  text-align: center;
+}
+
+.calendar {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.calendarWeekday {
+  border-color: var(--line);
+  background: #f8fafc;
+  color: #7a8496;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.calendarDay {
+  min-height: 132px;
+  border-color: var(--line);
+  background: #fff;
+}
+
+.calendarDay:hover {
+  background: #f8faff;
+}
+
+.calendarDay.today {
+  background: #f1f6ff;
+  box-shadow: inset 0 0 0 2px #2558d9;
+}
+
+.calendarEvent {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.calendarEvent.email { background: #eaf1ff; color: #2859bd; }
+.calendarEvent.whatsapp { background: #e9f8f0; color: #16724a; }
+.calendarEvent.html_email { background: #f3ecfb; color: #7346aa; }
+
+.modalBackdrop {
+  background: rgba(15, 25, 45, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  border: 0;
+  border-radius: 18px;
+  box-shadow: 0 25px 80px rgba(16, 28, 51, 0.28);
+}
+
+.modalHead {
+  border-color: var(--line);
+  background: #fff;
+}
+
+.modalFoot {
+  border-color: var(--line);
+  background: #fcfcfd;
+}
+
+.success {
+  border: 0;
+  background: #153f31;
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+
+.error {
+  border-color: #f0c8cc;
+  background: #fff0f2;
+  color: #a92f3b;
+}
+
+@media (max-width: 1280px) {
+  .summary { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (max-width: 980px) {
+  :root { --sidebar-width: 210px; }
+  .app { padding: 22px 20px 44px; }
+  .topbar { padding-inline: 20px; }
+  .summary { grid-template-columns: repeat(2, 1fr); }
+  .dailyPanel { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  body { padding-bottom: 68px; }
+
+  .sidebar {
+    inset: auto 0 0;
+    width: 100%;
+    height: 68px;
+    padding: 7px 8px;
+    border-top: 1px solid #263451;
+  }
+
+  .sidebarBrand,
+  .sidebarUser,
+  .sidebarNavLabel {
+    display: none;
+  }
+
+  .sidebarNav {
+    display: grid;
+    height: 100%;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 3px;
+  }
+
+  .sidebarNav button {
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px 2px;
+    font-size: 9px;
+    text-align: center;
+  }
+
+  .sidebarNav button > span {
+    width: auto;
+    font-size: 16px;
+  }
+
+  .sidebarNav button.active {
+    box-shadow: inset 0 3px #82a8ff;
+  }
+
+  .mainWorkspace {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .topbar {
+    min-height: 72px;
+    padding: 12px 16px;
+  }
+
+  .topbar h1 { font-size: 19px; }
+  .topbar p { display: none; }
+  .topbarNew { width: 42px; overflow: hidden; padding-inline: 10px; font-size: 0; white-space: nowrap; }
+  .topbarNew::first-letter { font-size: 18px; }
+  .app { padding: 16px 12px 30px; }
+  .summary { gap: 9px; }
+  .metric { min-height: 92px; padding: 13px; }
+  .panel, .dailyPanel > div { padding: 14px; }
+  .calendarDay { min-height: 100px; }
+}
+
+@media (max-width: 480px) {
+  .summary { grid-template-columns: 1fr 1fr; }
+  .topbarActions { gap: 5px; }
+  .sidebarNav button { font-size: 8px; }
+}
