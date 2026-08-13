@@ -7,6 +7,8 @@
   --line: #e5e9f0;
   --blue: #2558d9;
   --blue-dark: #1746bb;
+  --sidebar: #111c35;
+  --sidebar-active: #244a95;
   --yellow: #2558d9;
   --green: #168455;
   --red: #c33c49;
@@ -34,7 +36,7 @@ body {
   width: var(--sidebar-width);
   flex-direction: column;
   padding: 24px 16px 18px;
-  background: #111c35;
+  background: var(--sidebar);
   color: #fff;
 }
 
@@ -99,7 +101,7 @@ body {
 }
 
 .sidebarNav button.active {
-  background: #244a95;
+  background: var(--sidebar-active);
   color: #fff;
   box-shadow: inset 3px 0 #82a8ff;
 }
@@ -668,31 +670,31 @@ body {
   justify-content: space-between;
   gap: 24px;
   padding: 26px 28px;
-  border: 1px solid #dbe5f5;
   border-radius: 18px;
-  background: linear-gradient(120deg, #eef4ff, #f8fbff 58%, #eef8f4);
+  background: linear-gradient(120deg, #173a79, #2862c8);
+  box-shadow: var(--shadow);
 }
 
 .overviewDate {
   display: inline-flex;
   padding: 5px 8px;
   border-radius: 7px;
-  background: #dce8ff;
-  color: #2859bd;
+  background: rgba(255, 255, 255, 0.14);
+  color: #cbd9f7;
   font-size: 9px;
   font-weight: 900;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.1em;
 }
 
 .overviewHero h2 {
   margin: 12px 0 5px;
-  color: #17243b;
+  color: #fff;
   font-size: 26px;
 }
 
 .overviewHero p {
   margin: 0;
-  color: #69758a;
+  color: #d9e5ff;
   font-size: 13px;
 }
 
