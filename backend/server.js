@@ -3,6 +3,7 @@ import http from 'node:http';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toN8nCalendarEvent } from './calendar-event.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -309,79 +310,6 @@ function fromDbDispatch(item) {
   };
 }
 
-function padNumber(value) {
-  return String(value).padStart(2, '0');
-}
-
-function normalizeTime(value) {
-  const match = String(value || '').match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
-  return match ? `${match[1]}:${match[2]}` : '09:00';
-}
-
-function addMinutesToLocalDateTime(dateValue, timeValue, minutes) {
-  const [year, month, day] = dateValue.split('-').map(Number);
-  const [hour, minute] = normalizeTime(timeValue).split(':').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute + minutes));
-  return `${date.getUTCFullYear()}-${padNumber(date.getUTCMonth() + 1)}-${padNumber(date.getUTCDate())}T${padNumber(date.getUTCHours())}:${padNumber(date.getUTCMinutes())}:00`;
-}
-
-function calendarDateTime(dispatch) {
-  const time = normalizeTime(dispatch.time || '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dispatch.date)) return null;
-  return {
-    dateTime: `${dispatch.date}T${time}:00`,
-    timeZone: 'America/Campo_Grande'
-  };
-}
-
-function googleCalendarColorId(channel) {
-  if (channel === 'whatsapp') return '10';
-  if (channel === 'html_email') return '3';
-  return '9';
-}
-
-function toN8nCalendarEvent(dispatch, base) {
-  const start = calendarDateTime(dispatch);
-  const title = dispatch.templateName || dispatch.campaign || 'Disparo';
-  const eventId = dispatch.googleCalendarEventId || '';
-  return {
-    sourceId: dispatch.id,
-    templateId: dispatch.id,
-    templateName: dispatch.templateName || '',
-    googleEventId: eventId,
-    id: eventId,
-    colorId: googleCalendarColorId(dispatch.channel || 'email'),
-    summary: title,
-    description: [
-      `ID do template: ${dispatch.id}`,
-      dispatch.templateName ? `Template: ${dispatch.templateName}` : '',
-      dispatch.description,
-      dispatch.subject ? `Assunto: ${dispatch.subject}` : '',
-      dispatch.audience ? `Publico: ${dispatch.audience}` : '',
-      dispatch.responsible ? `Responsavel: ${dispatch.responsible}` : '',
-      base?.mainBase ? `Base: ${base.mainBase}` : ''
-    ].filter(Boolean).join('\n'),
-    start,
-    end: start ? {
-      dateTime: addMinutesToLocalDateTime(dispatch.date, dispatch.time || '', 60),
-      timeZone: 'America/Campo_Grande'
-    } : null,
-    extendedProperties: {
-      private: {
-        source: 'unigran-email-planner',
-        dispatchId: dispatch.id,
-        googleEventId: eventId,
-        status: dispatch.status,
-        channel: dispatch.channel || 'email',
-        campaign: dispatch.campaign || '',
-        audience: dispatch.audience || '',
-        responsible: dispatch.responsible || ''
-      }
-    },
-    raw: dispatch
-  };
-}
-
 function toDbBase(item) {
   return {
     id: item.id,
@@ -471,6 +399,36 @@ async function loadState(accessToken) {
   };
 }
 
+async function loadCalendarContext(dispatchId, accessToken) {
+  const encodedDispatchId = encodeURIComponent(dispatchId);
+  const [selectedDispatches, dispatches, bases, campaigns, audiences, responsibles] = await Promise.all([
+    supabaseRequest(TABLES.dispatches, `?select=*&id=eq.${encodedDispatchId}&limit=1`, { accessToken }),
+    supabaseRequest(TABLES.dispatches, '?select=id,updated_at,created_at,status', { accessToken }),
+    supabaseRequest(TABLES.bases, '?select=id,main_base,updated_at,created_at', { accessToken }),
+    optionalSupabaseList(TABLES.campaigns, '?select=id,name,updated_at,created_at&active=eq.true', accessToken),
+    optionalSupabaseList(TABLES.audiences, '?select=id,name,updated_at,created_at&active=eq.true', accessToken),
+    optionalSupabaseList(TABLES.responsibles, '?select=id,name,updated_at,created_at&active=eq.true', accessToken)
+  ]);
+
+  const dispatchRow = selectedDispatches?.[0];
+  const baseRow = dispatchRow?.base_rule_id
+    ? bases.find(item => item.id === dispatchRow.base_rule_id)
+    : undefined;
+
+  return {
+    dispatchRow,
+    baseRow,
+    revisionRows: { dispatches, bases, campaigns, audiences, responsibles }
+  };
+}
+
+function revisionAfterDispatchUpdate(groups, updatedDispatch) {
+  return revisionFromRows({
+    ...groups,
+    dispatches: groups.dispatches.map(item => item.id === updatedDispatch.id ? updatedDispatch : item)
+  });
+}
+
 async function sendCalendarWebhook(body, user) {
   if (!N8N_CALENDAR_WEBHOOK_URL) {
     throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
@@ -481,14 +439,15 @@ async function sendCalendarWebhook(body, user) {
   if (!dispatchId) throw new Error('Informe o disparo que sera enviado ao Google Calendar.');
   if (!['upsert', 'delete'].includes(action)) throw new Error('Ação de Google Calendar inválida.');
 
-  const state = await loadState(user.accessToken);
-  const basesById = new Map(state.bases.map(base => [base.id, base]));
-  const dispatch = state.dispatches.find(item => item.id === dispatchId);
+  const startedAt = Date.now();
+  const context = await loadCalendarContext(dispatchId, user.accessToken);
+  const contextLoadedAt = Date.now();
+  const dispatch = context.dispatchRow ? fromDbDispatch(context.dispatchRow) : undefined;
   if (!dispatch) throw new Error('Disparo nao encontrado.');
   if (action === 'upsert' && dispatch.status !== 'Pronto para disparo') {
     throw new Error('Apenas disparos com status Pronto para disparo podem ser enviados ao Google Calendar.');
   }
-  const event = toN8nCalendarEvent(dispatch, basesById.get(dispatch.baseId));
+  const event = toN8nCalendarEvent(dispatch, context.baseRow ? fromDbBase(context.baseRow) : undefined);
 
   const payload = {
     source: 'unigran-email-planner',
@@ -523,21 +482,34 @@ async function sendCalendarWebhook(body, user) {
   if (action === 'upsert' && !returnedEventId) {
     throw new Error('O n8n não retornou o ID real do evento criado/atualizado. Importe o workflow v4 com o nó Respond to Webhook.');
   }
+  const webhookFinishedAt = Date.now();
 
   const nextEventId = action === 'delete' ? '' : returnedEventId;
-  await supabaseRequest(TABLES.dispatches, `?id=eq.${encodeURIComponent(dispatch.id)}`, {
+  const updatedDispatches = await supabaseRequest(TABLES.dispatches, `?id=eq.${encodeURIComponent(dispatch.id)}&select=id,updated_at,created_at,status`, {
     method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
+    headers: { Prefer: 'return=representation' },
     body: JSON.stringify({ google_calendar_event_id: nextEventId || null }),
     accessToken: user.accessToken
   });
+  const updatedDispatch = updatedDispatches?.[0];
+  if (!updatedDispatch) {
+    throw new Error('Supabase nao confirmou a atualizacao do disparo apos sincronizar o calendario.');
+  }
+  const revision = revisionAfterDispatchUpdate(context.revisionRows, updatedDispatch);
+  const finishedAt = Date.now();
 
-  const refreshedState = await loadState(user.accessToken);
+  console.info('[calendar-sync]', {
+    action,
+    contextMs: contextLoadedAt - startedAt,
+    webhookMs: webhookFinishedAt - contextLoadedAt,
+    persistenceMs: finishedAt - webhookFinishedAt,
+    totalMs: finishedAt - startedAt
+  });
 
   return {
     sent: 1,
     eventId: nextEventId,
-    revision: refreshedState.revision,
+    revision,
     response: data
   };
 }
