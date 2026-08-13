@@ -11,7 +11,7 @@ npm install
 npm run server
 npm run dev
 & "C:\Program Files\nodejs\npm.cmd" run build
-cd "C:\Users\MKT_EAD\Downloads\disparo de emails 2\disparo de emails"
+cd "C:\Planejamento de Disparos\disparo de emails 2\disparo de emails"
 npm run server
 
 npm.cmd run check
