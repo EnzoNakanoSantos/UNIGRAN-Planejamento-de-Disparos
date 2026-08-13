@@ -71,7 +71,7 @@ export type Validation = {
   issues: string[];
 };
 
-export type Tab = 'email' | 'whatsapp' | 'html_email' | 'calendar' | 'bases' | 'catalogs';
+export type Tab = 'overview' | 'email' | 'whatsapp' | 'html_email' | 'calendar' | 'bases' | 'catalogs';
 export type Modal = 'dispatch' | 'dispatchDetails' | 'calendarDay' | 'base' | null;
 export type CatalogKey = 'campaigns' | 'audiences' | 'responsibles';
 export type FilterState = {

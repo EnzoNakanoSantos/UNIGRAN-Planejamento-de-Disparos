@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentUser, loadState, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
 import { addDaysISO, baseValidation, dispatchValidation, fmtDate, isBaseStale, overlapMap, todayISO, uid } from './logic';
 import { AUTH_STORAGE_KEY, CHIP_OPTIONS, DISPATCH_FORM_STATUS, EXCEL_TYPES, MAX_ATTACHMENT_SIZE, RESPONSIBLE_BY_EMAIL } from './config/dispatch';
@@ -21,6 +21,7 @@ import { AttachmentPicker, SpreadsheetAttachmentPicker } from './components/form
 import { IssueList, UpcomingList } from './features/dispatches/DashboardLists';
 import { useCalendar } from './features/calendar/useCalendar';
 import { useHeaderMenu } from './hooks/useHeaderMenu';
+import { OverviewDashboard } from './features/overview/OverviewDashboard';
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
@@ -32,7 +33,9 @@ export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [authError, setAuthError] = useState('');
-  const [tab, setTab] = useState<Tab>('email');
+  const [tab, setTab] = useState<Tab>('overview');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
   const { headerMenuOpen, setHeaderMenuOpen } = useHeaderMenu();
   const [editingDispatch, setEditingDispatch] = useState<Dispatch>(emptyDispatch());
@@ -49,6 +52,8 @@ export default function App() {
   const [filters, setFilters] = useState(defaultFilters);
   const [baseQuery, setBaseQuery] = useState('');
   const [baseSort, setBaseSort] = useState<BaseSort>('name');
+  const deferredFiltersQ = useDeferredValue(filters.q);
+  const deferredBaseQuery = useDeferredValue(baseQuery);
 
   useEffect(() => {
     restoreSession();
@@ -279,7 +284,7 @@ export default function App() {
       const text = `${dispatch.id} ${dispatch.baseId} ${dispatch.campaign} ${dispatch.audience} ${dispatch.description} ${dispatch.templateName} ${dispatch.subject} ${dispatch.body}`.toLowerCase();
       const base = baseById.get(dispatch.baseId);
       const validation = dispatchValidation(dispatch, state.bases);
-      if (filters.q && !text.includes(filters.q.toLowerCase())) return false;
+      if (deferredFiltersQ && !text.includes(deferredFiltersQ.toLowerCase())) return false;
       if (filters.start && dispatch.date < filters.start) return false;
       if (filters.end && dispatch.date > filters.end) return false;
       if (filters.campaign && dispatch.campaign !== filters.campaign) return false;
@@ -301,7 +306,7 @@ export default function App() {
       const comparison = dispatchSortValue(a, dispatchSortField).localeCompare(dispatchSortValue(b, dispatchSortField));
       return dispatchSortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [baseById, channelDispatches, dispatchSortDirection, dispatchSortField, filters, overlaps, state.bases]);
+  }, [baseById, channelDispatches, deferredFiltersQ, dispatchSortDirection, dispatchSortField, filters, overlaps, state.bases]);
 
   const metrics = useMemo(() => ({
     total: filteredDispatches.length,
@@ -341,7 +346,7 @@ export default function App() {
   const sessionResponsible = session ? responsibleForEmail(session.email) : '';
   const baseSuggestions = useMemo(() => unique(state.bases.flatMap(base => [base.campaign, base.mainBase, base.responsible])), [state.bases]);
   const filteredBases = useMemo(() => {
-    const query = baseQuery.trim().toLowerCase();
+    const query = deferredBaseQuery.trim().toLowerCase();
     const list = state.bases.filter(base => {
       if (!query) return true;
       return `${base.campaign} ${base.mainBase} ${base.expectedAction} ${base.responsible}`.toLowerCase().includes(query);
@@ -351,7 +356,7 @@ export default function App() {
       if (baseSort === 'date-asc') return (a.lastUpdated || '').localeCompare(b.lastUpdated || '');
       return `${a.mainBase} ${a.campaign}`.localeCompare(`${b.mainBase} ${b.campaign}`, 'pt-BR');
     });
-  }, [baseQuery, baseSort, state.bases]);
+  }, [baseSort, deferredBaseQuery, state.bases]);
   const { calendarMonth, setCalendarMonth, viewingDay, setViewingDay, calendarDispatches, viewingDayDispatches } = useCalendar(state.dispatches);
   const detailChannelDispatches = useMemo(
     () => viewingDispatch
@@ -371,11 +376,22 @@ export default function App() {
     setFilters(current => ({ ...current, start, end: addDaysISO(start, days) }));
   }
 
+  function navigate(nextTab: Tab) {
+    setTab(nextTab);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   function openDispatch(dispatch?: Dispatch) {
     const latest = dispatch
       ? stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch
       : null;
     setEditingDispatch(latest ? { ...latest } : { ...emptyDispatch(activeChannel), responsible: sessionResponsible });
+    setModal('dispatch');
+  }
+
+  function openDispatchForDate(date: string) {
+    setEditingDispatch({ ...emptyDispatch('email'), date, responsible: sessionResponsible });
     setModal('dispatch');
   }
 
@@ -566,6 +582,7 @@ export default function App() {
     return <Login error={authError} onLogin={login} />;
   }
 
+<<<<<<< HEAD
   return (
     <main className="app">
       <header className="header">
@@ -576,6 +593,72 @@ export default function App() {
           <span className="sessionBadge">{session.email}</span>
         </div>
         <div className="headerActions">
+=======
+  const pageTitle = tab === 'calendar'
+    ? 'Calendário'
+    : tab === 'bases'
+      ? 'Regras de bases'
+      : tab === 'catalogs'
+        ? 'Cadastros'
+        : tab === 'overview'
+          ? 'Visão geral'
+        : `Disparos de ${channelName(activeChannel)}`;
+  const userInitials = (session.name || session.email)
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('');
+  const readinessChecks = [
+    ['Data definida', Boolean(editingDispatch.date)],
+    ['Horário definido', Boolean(editingDispatch.time)],
+    ['Campanha selecionada', Boolean(editingDispatch.campaign)],
+    ['Público selecionado', Boolean(editingDispatch.audience)],
+    ['Base selecionada', Boolean(editingDispatch.baseId)],
+    ['Responsável definido', Boolean(sessionResponsible || editingDispatch.responsible)],
+    ['Template definido', Boolean(editingDispatch.templateName)],
+    ['Conteúdo preenchido', Boolean(editingDispatch.channel === 'html_email' ? editingDispatch.htmlContent : editingDispatch.body)]
+  ] as const;
+  const readinessCompleted = readinessChecks.filter(([, done]) => done).length;
+
+  return (
+    <div className="appShell">
+      {sidebarOpen && <button className="sidebarScrim" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+        <div className="sidebarBrand">
+          <img className="sidebarBrandLogo" src="/unigran-logo.png" alt="UNIGRAN" />
+        </div>
+        <nav className="sidebarNav" aria-label="Navegação principal">
+          <button aria-pressed={tab === 'overview'} className={tab === 'overview' ? 'active' : ''} onClick={() => navigate('overview')}><span aria-hidden="true">⌂</span>Visão geral</button>
+          <span className="sidebarNavLabel">DISPAROS</span>
+          <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}><span aria-hidden="true">✉</span>E-mail</button>
+          <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}><span aria-hidden="true">◉</span>WhatsApp</button>
+          <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}><span aria-hidden="true">◇</span>E-mail HTML</button>
+          <span className="sidebarNavLabel">ORGANIZAÇÃO</span>
+          <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => navigate('calendar')}><span aria-hidden="true">▦</span>Calendário</button>
+          <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => navigate('bases')}><span aria-hidden="true">◎</span>Regras de bases</button>
+          <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => navigate('catalogs')}><span aria-hidden="true">▤</span>Cadastros</button>
+        </nav>
+        <div className="sidebarUser">
+          <span className="sidebarAvatar">{userInitials}</span>
+          <div><strong>{session.name || 'Usuário'}</strong><span>{session.email}</span></div>
+        </div>
+      </aside>
+
+      <main className="mainWorkspace">
+        <header className="topbar">
+          <div className="topbarTitle">
+            <button className="mobileMenu" type="button" aria-label="Abrir menu" onClick={() => setSidebarOpen(true)}>☰</button>
+            <div>
+            <p>Marketing &amp; Relacionamento</p>
+            <h1>{pageTitle}</h1>
+            </div>
+          </div>
+          <div className="topbarActions">
+            {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
+              <button className="btn primary topbarNew" onClick={() => openDispatch()}>＋ Novo disparo</button>
+            )}
+>>>>>>> 6af687d (feat: ajustes visuais e paginacao)
           <details className="headerMenu" open={headerMenuOpen}>
             <summary
               aria-label="Abrir ações rápidas"
@@ -604,6 +687,7 @@ export default function App() {
       {error && <div className="error">{error}</div>}
       {savedMessage && !error && <div className="success">{savedMessage}</div>}
 
+<<<<<<< HEAD
       <nav className="tabs" aria-label="Navegação principal">
         <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => setTab('email')}>Disparos de e-mail</button>
         <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => setTab('whatsapp')}>Disparos de WhatsApp</button>
@@ -612,9 +696,26 @@ export default function App() {
         <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => setTab('bases')}>Regras de bases</button>
         <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => setTab('catalogs')}>Cadastros</button>
       </nav>
+=======
+      {tab === 'overview' && (
+        <OverviewDashboard
+          dispatches={state.dispatches}
+          bases={state.bases}
+          userName={(session.name || session.email.split('@')[0]).split(' ')[0]}
+          onNavigate={navigate}
+          onNew={() => openDispatch()}
+          onView={openDispatchDetails}
+        />
+      )}
+>>>>>>> 6af687d (feat: ajustes visuais e paginacao)
 
       {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
         <>
+          <div className="channelSegmented" aria-label="Canal de disparo">
+            <button className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}>E-mail <span>{state.dispatches.filter(item => (item.channel || 'email') === 'email').length}</span></button>
+            <button className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}>WhatsApp <span>{state.dispatches.filter(item => item.channel === 'whatsapp').length}</span></button>
+            <button className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}>HTML <span>{state.dispatches.filter(item => item.channel === 'html_email').length}</span></button>
+          </div>
           <section className="summary">
             <Metric label="Total de disparos" value={metrics.total} />
             <Metric label="Planejados" value={metrics.planned} />
@@ -652,9 +753,10 @@ export default function App() {
               <button className="btn ghost small" onClick={() => setPeriod(7)}>Próximos 7 dias</button>
               <button className="btn ghost small" onClick={() => setPeriod(15)}>Próximos 15 dias</button>
               <button className="btn ghost small" onClick={() => setPeriod(30)}>Próximos 30 dias</button>
+              <button className="btn ghost small" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded(current => !current)}>☷ Mais filtros</button>
               <button className="btn ghost small" onClick={() => setFilters(defaultFilters())}>Limpar filtros</button>
             </div>
-            <div className="filterBoard">
+            <div className={`filterBoard ${filtersExpanded ? 'expanded' : ''}`}>
               <div className="filterGroup searchGroup">
                 <span>Busca e período</span>
                 <div className="filterRow dateRow">
@@ -731,6 +833,7 @@ export default function App() {
             dispatches={calendarDispatches}
             onView={dispatch => openDispatchDetails(dispatch, true)}
             onDayView={openCalendarDay}
+            onCreate={openDispatchForDate}
           />
         </section>
       )}
@@ -797,8 +900,15 @@ export default function App() {
 
       {modal === 'dispatch' && (
         <div className="modalBackdrop" onMouseDown={closeModal}>
-          <form className="modal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
+          <form className="modal dispatchFormModal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
             <ModalHead title={editingDispatch.id ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={closeModal} />
+            <div className="dispatchFormLayout">
+            <div className="dispatchFormContent">
+            <div className="channelSelector">
+              <button type="button" className={editingDispatch.channel === 'email' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'email' }))}>✉ E-mail</button>
+              <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'whatsapp' }))}>◉ WhatsApp</button>
+              <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'html_email' }))}>◇ E-mail HTML</button>
+            </div>
             <div className="modalGrid">
               <Field label="Data de disparo">
                 <BrazilianDatePicker
@@ -891,6 +1001,17 @@ export default function App() {
                   />
                 </Field>
               )}
+            </div>
+            </div>
+            <aside className="readinessPanel">
+              <div className="readinessTop"><span>Prontidão</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
+              <div className="readinessProgress"><i style={{ width: `${(readinessCompleted / readinessChecks.length) * 100}%` }} /></div>
+              <ul>
+                {readinessChecks.map(([label, done]) => <li className={done ? 'done' : 'pending'} key={label}><span>{done ? '✓' : '!'}</span>{label}</li>)}
+              </ul>
+              {readinessCompleted < readinessChecks.length && <div className="readinessAlert"><strong>Complete os itens pendentes</strong><p>Revise os campos antes de marcar o disparo como pronto.</p></div>}
+              <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatch(current => ({ ...current, status: 'Pronto para disparo' }))}>✓ Marcar como pronto</button>
+            </aside>
             </div>
             <ModalFoot saving={saving} onClose={closeModal} />
           </form>

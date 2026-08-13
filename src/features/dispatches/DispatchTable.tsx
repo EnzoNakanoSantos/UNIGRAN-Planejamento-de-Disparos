@@ -5,6 +5,8 @@ import { dispatchTime, duplicateNameCount } from '../../utils/app';
 import { StatusSelect } from '../../components/forms/Controls';
 import { ValidationBadge } from '../../components/feedback/ValidationBadge';
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
 export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onView, onEdit, onDelete, onStatus }: {
   dispatches: Dispatch[];
   bases: BaseRule[];
@@ -17,11 +19,22 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const selectedSet = new Set(selected);
+  const totalPages = Math.max(1, Math.ceil(dispatches.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const visibleDispatches = dispatches.slice(startIndex, endIndex);
 
   useEffect(() => {
     setSelected(current => current.filter(id => dispatches.some(dispatch => dispatch.id === id)));
   }, [dispatches]);
+
+  useEffect(() => {
+    setPage(current => Math.min(current, Math.max(1, Math.ceil(dispatches.length / pageSize))));
+  }, [dispatches.length, pageSize]);
 
   function toggleSelected(id: string, checked: boolean) {
     setConfirming(false);
@@ -30,7 +43,7 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
 
   function toggleAll(checked: boolean) {
     setConfirming(false);
-    setSelected(checked ? dispatches.map(dispatch => dispatch.id) : []);
+    setSelected(checked ? visibleDispatches.map(dispatch => dispatch.id) : []);
   }
 
   async function confirmDelete() {
@@ -42,14 +55,32 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
   if (!dispatches.length) return <div className="empty">Nenhum disparo encontrado.</div>;
   return (
     <div className="dispatchList">
+      <div className="paginationBar">
+        <div className="paginationSummary">
+          <strong>{dispatches.length}</strong> disparo(s) encontrado(s)
+          <span>Mostrando {startIndex + 1}-{Math.min(endIndex, dispatches.length)}</span>
+        </div>
+        <label className="pageSizeControl">
+          <span>Por página</span>
+          <select
+            value={pageSize}
+            onChange={event => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
+          >
+            {PAGE_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="dispatchBulk">
         <label>
           <input
             type="checkbox"
-            checked={selected.length === dispatches.length}
+            checked={visibleDispatches.length > 0 && visibleDispatches.every(dispatch => selectedSet.has(dispatch.id))}
             onChange={event => toggleAll(event.target.checked)}
           />
-          Selecionar todos
+          Selecionar página
         </label>
         <button type="button" className="btn dangerSoft small" disabled={!selected.length} onClick={() => setConfirming(true)}>
           Remover selecionados
@@ -90,7 +121,7 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
             </tr>
           </thead>
           <tbody>
-            {dispatches.map(dispatch => {
+            {visibleDispatches.map(dispatch => {
               const validation = dispatchValidation(dispatch, bases);
               const conflicts = overlaps.get(dispatch.id) || [];
               const duplicateCount = duplicateNameCount(dispatch, duplicateNames);
@@ -137,7 +168,13 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
           </tbody>
         </table>
       </div>
+      <div className="paginationFooter">
+        <button type="button" className="btn ghost small" disabled={currentPage === 1} onClick={() => setPage(1)}>Primeira</button>
+        <button type="button" className="btn ghost small" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Anterior</button>
+        <span>Página {currentPage} de {totalPages}</span>
+        <button type="button" className="btn ghost small" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>Próxima</button>
+        <button type="button" className="btn ghost small" disabled={currentPage === totalPages} onClick={() => setPage(totalPages)}>Última</button>
+      </div>
     </div>
   );
 }
-

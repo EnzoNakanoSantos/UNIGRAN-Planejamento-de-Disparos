@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { fmtDate } from '../../logic';
 import { isoDate, unique } from '../../utils/app';
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
 export function CatalogManager({ title, description, values, dates, onAdd, onUpdate, onRemove }: {
   title: string;
   description: string;
@@ -23,7 +25,10 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
   const [createdTo, setCreatedTo] = useState('');
   const [updatedFrom, setUpdatedFrom] = useState('');
   const [updatedTo, setUpdatedTo] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const selectedSet = new Set(selected);
+
   const visibleValues = useMemo(() => {
     const search = query.trim().toLowerCase();
     return values
@@ -46,16 +51,27 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
         return a.localeCompare(b, 'pt-BR');
       });
   }, [createdFrom, createdTo, dates, order, query, updatedFrom, updatedTo, values]);
+
+  const totalPages = Math.max(1, Math.ceil(visibleValues.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedValues = visibleValues.slice(startIndex, endIndex);
   const datalistId = `catalog-${title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\W+/g, '-')}`;
 
   useEffect(() => {
     setSelected(current => current.filter(item => values.includes(item)));
   }, [values]);
 
+  useEffect(() => {
+    setPage(current => Math.min(current, Math.max(1, Math.ceil(visibleValues.length / pageSize))));
+  }, [pageSize, visibleValues.length]);
+
   function submitNew(event: FormEvent) {
     event.preventDefault();
     onAdd(newValue);
     setNewValue('');
+    setPage(1);
   }
 
   function startEdit(value: string) {
@@ -77,7 +93,7 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
 
   function toggleAll(checked: boolean) {
     setConfirming(false);
-    setSelected(checked ? visibleValues : []);
+    setSelected(checked ? paginatedValues : []);
   }
 
   async function confirmRemove() {
@@ -104,12 +120,21 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
           list={datalistId}
           placeholder={`Pesquisar ${title.toLowerCase()}`}
           value={query}
-          onChange={event => setQuery(event.target.value)}
+          onChange={event => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
         />
         <datalist id={datalistId}>
           {values.map(value => <option key={value} value={value} />)}
         </datalist>
-        <select value={order} onChange={event => setOrder(event.target.value as typeof order)}>
+        <select
+          value={order}
+          onChange={event => {
+            setOrder(event.target.value as typeof order);
+            setPage(1);
+          }}
+        >
           <option value="name-asc">Nome A-Z</option>
           <option value="name-desc">Nome Z-A</option>
           <option value="created-desc">Criação recente</option>
@@ -118,21 +143,39 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
           <option value="updated-asc">Alteração antiga</option>
         </select>
       </div>
+      <div className="paginationBar catalogPaginationBar">
+        <div className="paginationSummary">
+          <strong>{visibleValues.length}</strong> registro(s)
+          <span>Mostrando {visibleValues.length ? startIndex + 1 : 0}-{Math.min(endIndex, visibleValues.length)}</span>
+        </div>
+        <label className="pageSizeControl">
+          <span>Por página</span>
+          <select
+            value={pageSize}
+            onChange={event => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
+          >
+            {PAGE_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="catalogDateFilters">
-        <label><span>Criação de</span><input type="date" value={createdFrom} onChange={event => setCreatedFrom(event.target.value)} /></label>
-        <label><span>Criação até</span><input type="date" value={createdTo} onChange={event => setCreatedTo(event.target.value)} /></label>
-        <label><span>Alteração de</span><input type="date" value={updatedFrom} onChange={event => setUpdatedFrom(event.target.value)} /></label>
-        <label><span>Alteração até</span><input type="date" value={updatedTo} onChange={event => setUpdatedTo(event.target.value)} /></label>
+        <label><span>Criação de</span><input type="date" value={createdFrom} onChange={event => { setCreatedFrom(event.target.value); setPage(1); }} /></label>
+        <label><span>Criação até</span><input type="date" value={createdTo} onChange={event => { setCreatedTo(event.target.value); setPage(1); }} /></label>
+        <label><span>Alteração de</span><input type="date" value={updatedFrom} onChange={event => { setUpdatedFrom(event.target.value); setPage(1); }} /></label>
+        <label><span>Alteração até</span><input type="date" value={updatedTo} onChange={event => { setUpdatedTo(event.target.value); setPage(1); }} /></label>
       </div>
       {values.length > 0 && (
         <div className="catalogBulk">
           <label>
             <input
               type="checkbox"
-              checked={visibleValues.length > 0 && visibleValues.every(value => selectedSet.has(value))}
+              checked={paginatedValues.length > 0 && paginatedValues.every(value => selectedSet.has(value))}
               onChange={event => toggleAll(event.target.checked)}
             />
-            Selecionar visíveis
+            Selecionar página
           </label>
           <button type="button" className="btn dangerSoft small" disabled={!selected.length} onClick={() => setConfirming(true)}>
             Remover selecionados
@@ -152,7 +195,7 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
       <div className="catalogList">
         {!values.length && <div className="empty smallEmpty">Nada cadastrado ainda.</div>}
         {values.length > 0 && !visibleValues.length && <div className="empty smallEmpty">Nenhum cadastro encontrado.</div>}
-        {visibleValues.map(value => (
+        {paginatedValues.map(value => (
           <div className="catalogItem" key={value}>
             {editing === value ? (
               <form className="catalogEdit" onSubmit={saveEdit}>
@@ -185,7 +228,15 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
           </div>
         ))}
       </div>
+      {visibleValues.length > 0 && (
+        <div className="paginationFooter catalogPaginationFooter">
+          <button type="button" className="btn ghost small" disabled={currentPage === 1} onClick={() => setPage(1)}>Primeira</button>
+          <button type="button" className="btn ghost small" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Anterior</button>
+          <span>Página {currentPage} de {totalPages}</span>
+          <button type="button" className="btn ghost small" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>Próxima</button>
+          <button type="button" className="btn ghost small" disabled={currentPage === totalPages} onClick={() => setPage(totalPages)}>Última</button>
+        </div>
+      )}
     </div>
   );
 }
-
