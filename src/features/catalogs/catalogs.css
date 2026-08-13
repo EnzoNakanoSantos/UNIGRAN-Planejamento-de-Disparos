@@ -102,6 +102,19 @@
   padding: 0 16px 14px;
 }
 
+.catalogPaginationBar {
+  padding-top: 0;
+  padding-bottom: 14px;
+  background: transparent;
+  border-bottom: 0;
+}
+
+.catalogPaginationFooter {
+  padding-top: 0;
+  background: transparent;
+  border-top: 0;
+}
+
 .catalogBulk label,
 .catalogSelect {
   display: inline-flex;
@@ -201,4 +214,3 @@
   }
 
 }
-

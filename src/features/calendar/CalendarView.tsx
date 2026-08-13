@@ -2,11 +2,12 @@ import type { Dispatch } from '../../types';
 import { calendarDays, channelName, statusClass } from '../../utils/app';
 import { todayISO } from '../../logic';
 
-export function CalendarView({ month, dispatches, onView, onDayView }: {
+export function CalendarView({ month, dispatches, onView, onDayView, onCreate }: {
   month: string;
   dispatches: Dispatch[];
   onView: (dispatch: Dispatch) => void;
   onDayView: (day: string) => void;
+  onCreate: (day: string) => void;
 }) {
   const days = calendarDays(month);
   const today = todayISO();
@@ -59,6 +60,16 @@ export function CalendarView({ month, dispatches, onView, onDayView }: {
                 </button>
               ))}
               {hiddenCount > 0 && <span className="calendarMore">+ {hiddenCount} disparo(s). Clique no dia para ver todos.</span>}
+              {!outside && items.length === 0 && (
+                <button
+                  type="button"
+                  className="calendarEmptyCreate"
+                  onClick={event => {
+                    event.stopPropagation();
+                    onCreate(day);
+                  }}
+                >＋ Criar disparo</button>
+              )}
             </div>
           </div>
         );
@@ -100,5 +111,4 @@ export function CalendarDayDetails({ dispatches, onView, onEdit }: {
     </div>
   );
 }
-
 
