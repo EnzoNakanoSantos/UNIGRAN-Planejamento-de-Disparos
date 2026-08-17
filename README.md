@@ -18,6 +18,8 @@ npm.cmd run check
 npm.cmd run build
 npm.cmd install
 npm.cmd run dev
+
+http://localhost:3000/
 ```
 
 Depois abra o Vite:
