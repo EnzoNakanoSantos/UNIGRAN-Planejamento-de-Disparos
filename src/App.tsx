@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from 'react';
+import type { FormEvent } from 'react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentUser, loadState, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
 import { addDaysISO, baseValidation, dispatchValidation, fmtDate, isBaseStale, overlapMap, todayISO, uid } from './logic';
@@ -16,21 +16,40 @@ import { BaseTable } from './features/bases/BaseTable';
 import { BrazilianDatePicker, Metric, Select, SelectWithCreate, StatusSelect, TwentyFourHourPicker } from './components/forms/Controls';
 import { DispatchTable } from './features/dispatches/DispatchTable';
 import { DispatchDetails } from './features/dispatches/DispatchDetails';
-import { Field, ModalFoot, ModalHead } from './components/modal/ModalParts';
+import { ConfirmDialog, Field, ModalFoot, ModalHead } from './components/modal/ModalParts';
 import { AttachmentPicker, SpreadsheetAttachmentPicker } from './components/forms/AttachmentPickers';
 import { IssueList, UpcomingList } from './features/dispatches/DashboardLists';
 import { useCalendar } from './features/calendar/useCalendar';
 import { useHeaderMenu } from './hooks/useHeaderMenu';
 import { OverviewDashboard } from './features/overview/OverviewDashboard';
 import { dispatchReadinessChecks, missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
+import { dispatchSnapshot, hasUnsavedDispatchChanges } from '../shared/dirty-state.js';
+import { duplicateDispatchDraft } from '../shared/dispatch-duplicate.js';
+
+type FeedbackType = 'success' | 'warning' | 'error' | 'info';
+type Feedback = { type: FeedbackType; message: string };
+type PendingDiscardAction = { run: () => void };
+type DispatchFormMode = 'create' | 'edit';
+
+const LAST_RESPONSIBLE_STORAGE_KEY = 'unigran-last-responsible-by-channel';
+
+function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof defaultFilters>> {
+  return {
+    email: defaultFilters(),
+    whatsapp: defaultFilters(),
+    html_email: defaultFilters()
+  };
+}
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
   const stateRef = useRef(state);
-  const saveQueueRef = useRef(Promise.resolve());
+  const saveQueueRef = useRef(Promise.resolve(true));
   const saveVersionRef = useRef(0);
   const activeSavesRef = useRef(0);
   const calendarOperationsRef = useRef(new Set<string>());
+  const initialDispatchSnapshotRef = useRef('');
+  const initialDispatchRef = useRef<Dispatch | null>(null);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -40,6 +59,7 @@ export default function App() {
   const [modal, setModal] = useState<Modal>(null);
   const { headerMenuOpen, setHeaderMenuOpen } = useHeaderMenu();
   const [editingDispatch, setEditingDispatch] = useState<Dispatch>(emptyDispatch());
+  const [editingDispatchMode, setEditingDispatchMode] = useState<DispatchFormMode>('create');
   const [viewingDispatch, setViewingDispatch] = useState<Dispatch | null>(null);
   const [viewingDispatchFromCalendar, setViewingDispatchFromCalendar] = useState(false);
   const [editingBase, setEditingBase] = useState<BaseRule>(emptyBase());
@@ -48,11 +68,15 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
-  const [error, setError] = useState('');
-  const [savedMessage, setSavedMessage] = useState('');
-  const [filters, setFilters] = useState(defaultFilters);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [dispatchFieldErrors, setDispatchFieldErrors] = useState<string[]>([]);
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<PendingDiscardAction | null>(null);
+  const [suggestedFields, setSuggestedFields] = useState<string[]>([]);
+  const [filtersByChannel, setFiltersByChannel] = useState(defaultFiltersByChannel);
   const [baseQuery, setBaseQuery] = useState('');
   const [baseSort, setBaseSort] = useState<BaseSort>('name');
+  const activeChannel: DispatchChannel = tab === 'whatsapp' ? 'whatsapp' : tab === 'html_email' ? 'html_email' : 'email';
+  const filters = filtersByChannel[activeChannel];
   const deferredFiltersQ = useDeferredValue(filters.q);
   const deferredBaseQuery = useDeferredValue(baseQuery);
 
@@ -65,24 +89,76 @@ export default function App() {
   }, [state]);
 
   useEffect(() => {
-    if (!savedMessage) return;
-    const timeout = window.setTimeout(() => setSavedMessage(''), 3200);
+    if (!feedback || feedback.type !== 'success') return;
+    const timeout = window.setTimeout(() => setFeedback(null), 3200);
     return () => window.clearTimeout(timeout);
-  }, [savedMessage]);
+  }, [feedback]);
 
   useEffect(() => {
-    if (!modal && !calendarDeleteTarget) return;
+    if (!modal && !calendarDeleteTarget && !pendingDiscardAction) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
+      if (pendingDiscardAction) {
+        continueEditing();
+        return;
+      }
       if (calendarDeleteTarget) {
         setCalendarDeleteTarget(null);
         return;
       }
-      closeModal();
+      requestModalClose();
     }
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [modal, calendarDeleteTarget]);
+  }, [modal, calendarDeleteTarget, pendingDiscardAction, editingDispatch]);
+
+  const isDispatchDirty = modal === 'dispatch' && hasUnsavedDispatchChanges(editingDispatch, initialDispatchSnapshotRef.current);
+
+  useEffect(() => {
+    if (!isDispatchDirty) return;
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDispatchDirty]);
+
+  function showFeedback(type: FeedbackType, message: string) {
+    setFeedback(message ? { type, message } : null);
+  }
+
+  function setError(message: string) {
+    showFeedback('error', message);
+  }
+
+  function setSavedMessage(message: string) {
+    showFeedback('success', message);
+  }
+
+  function clearFeedback() {
+    setFeedback(null);
+  }
+
+  function readLastResponsible(channel: DispatchChannel) {
+    try {
+      const data = JSON.parse(window.localStorage.getItem(LAST_RESPONSIBLE_STORAGE_KEY) || '{}');
+      return String(data?.[channel] || '');
+    } catch {
+      return '';
+    }
+  }
+
+  function rememberLastResponsible(channel: DispatchChannel, responsible: string) {
+    const clean = responsible.trim();
+    if (!clean) return;
+    try {
+      const data = JSON.parse(window.localStorage.getItem(LAST_RESPONSIBLE_STORAGE_KEY) || '{}');
+      window.localStorage.setItem(LAST_RESPONSIBLE_STORAGE_KEY, JSON.stringify({ ...data, [channel]: clean }));
+    } catch {
+      window.localStorage.setItem(LAST_RESPONSIBLE_STORAGE_KEY, JSON.stringify({ [channel]: clean }));
+    }
+  }
 
   async function restoreSession() {
     const accessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || window.sessionStorage.getItem(AUTH_STORAGE_KEY);
@@ -121,10 +197,15 @@ export default function App() {
   }
 
   function logout() {
+    requestDiscardOrRun(logoutCore);
+  }
+
+  function logoutCore() {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
     setSession(null);
     setAppState({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
+    clearDispatchSnapshot();
     setSavedMessage('');
     setError('');
   }
@@ -153,13 +234,12 @@ export default function App() {
     if (calendarOperationsRef.current.has(dispatch.id)) return;
     const missing = missingReadyDispatchFields(dispatch);
     if (missing.length) {
-      setError(`Complete o disparo antes de sincronizar: ${missing.join(', ')}.`);
+      setError(`Não foi possível sincronizar com Google Calendar: informe ${missing.join(', ')}.`);
       return;
     }
     calendarOperationsRef.current.add(dispatch.id);
 
     setError('');
-    setSavedMessage('Disparo sincronizado com o Google Calendar.');
     try {
       const result = await sendCalendarToN8n(dispatch.id, session.accessToken, 'upsert');
       const current = stateRef.current;
@@ -173,9 +253,10 @@ export default function App() {
       setViewingDispatch(item => item?.id === dispatch.id
         ? { ...item, googleCalendarEventId: result.eventId }
         : item);
+      setSavedMessage('Evento sincronizado com Google Calendar.');
     } catch (err) {
       setSavedMessage('');
-      setError(err instanceof Error ? err.message : 'Não foi possível enviar ao n8n.');
+      setError(err instanceof Error ? err.message : 'Não foi possível sincronizar com Google Calendar.');
     } finally {
       calendarOperationsRef.current.delete(dispatch.id);
     }
@@ -235,7 +316,7 @@ export default function App() {
   async function persist(next: AppState, deletedCatalog?: { key: CatalogKey; value: string } | { key: CatalogKey; value: string }[]) {
     if (!session?.accessToken) {
       setError('Faça login para salvar alterações.');
-      return;
+      return false;
     }
     const accessToken = session.accessToken;
     const saveVersion = saveVersionRef.current + 1;
@@ -260,14 +341,16 @@ export default function App() {
       } catch (err) {
         if (saveVersion === saveVersionRef.current) setAppState(previous);
         setError(err instanceof Error ? err.message : 'Não foi possível salvar.');
+        return false;
       } finally {
         activeSavesRef.current -= 1;
         if (activeSavesRef.current === 0) setSaving(false);
       }
+      return true;
     };
 
     saveQueueRef.current = saveQueueRef.current.then(runSave, runSave);
-    await saveQueueRef.current;
+    return await saveQueueRef.current;
   }
 
   function setAppState(next: AppState) {
@@ -275,7 +358,6 @@ export default function App() {
     setState(next);
   }
 
-  const activeChannel: DispatchChannel = tab === 'whatsapp' ? 'whatsapp' : tab === 'html_email' ? 'html_email' : 'email';
   const channelLabel = channelName(activeChannel);
   const channelDispatches = useMemo(
     () => state.dispatches.filter(dispatch => (dispatch.channel || 'email') === activeChannel),
@@ -374,15 +456,39 @@ export default function App() {
   const detailDuplicateNames = useMemo(() => duplicateDispatchNameMap(detailChannelDispatches), [detailChannelDispatches]);
 
   function updateFilter(key: FilterKey, value: string | boolean) {
-    setFilters(current => ({ ...current, [key]: value }));
+    setFiltersByChannel(current => ({
+      ...current,
+      [activeChannel]: { ...current[activeChannel], [key]: value }
+    }));
   }
 
   function setPeriod(days: number) {
     const start = todayISO();
-    setFilters(current => ({ ...current, start, end: addDaysISO(start, days) }));
+    setFiltersByChannel(current => ({
+      ...current,
+      [activeChannel]: { ...current[activeChannel], start, end: addDaysISO(start, days) }
+    }));
+  }
+
+  function clearCurrentFilters() {
+    setFiltersByChannel(current => ({ ...current, [activeChannel]: defaultFilters() }));
+  }
+
+  function setPeriodPreset(value: string) {
+    if (!value) {
+      updateFilter('start', '');
+      updateFilter('end', '');
+      return;
+    }
+    setPeriod(Number(value));
   }
 
   function navigate(nextTab: Tab) {
+    if (nextTab === tab) return;
+    requestDiscardOrRun(() => navigateCore(nextTab));
+  }
+
+  function navigateCore(nextTab: Tab) {
     setTab(nextTab);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -392,12 +498,42 @@ export default function App() {
     const latest = dispatch
       ? stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch
       : null;
-    setEditingDispatch(latest ? { ...latest } : { ...emptyDispatch(activeChannel), responsible: sessionResponsible });
+    const nextDispatch = latest
+      ? { ...latest }
+      : { ...emptyDispatch(activeChannel), responsible: sessionResponsible || readLastResponsible(activeChannel) };
+    setEditingDispatch(nextDispatch);
+    setEditingDispatchMode(latest ? 'edit' : 'create');
+    setDispatchSnapshot(nextDispatch);
+    setDispatchFieldErrors([]);
+    setSuggestedFields([]);
     setModal('dispatch');
   }
 
+  function duplicateDispatch(dispatch: Dispatch) {
+    const latest = stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch;
+    const now = new Date().toISOString();
+    const duplicate = duplicateDispatchDraft(latest, { id: uid('disparo'), now }) as Dispatch;
+    requestDiscardOrRun(() => {
+      setViewingDispatch(null);
+      setViewingDispatchFromCalendar(false);
+      setViewingDay('');
+      setEditingDispatch(duplicate);
+      setEditingDispatchMode('create');
+      setDispatchSnapshot(duplicate);
+      setDispatchFieldErrors([]);
+      setSuggestedFields([]);
+      setModal('dispatch');
+      setTab(duplicate.channel || 'email');
+    });
+  }
+
   function openDispatchForDate(date: string) {
-    setEditingDispatch({ ...emptyDispatch('email'), date, responsible: sessionResponsible });
+    const nextDispatch = { ...emptyDispatch('email'), date, responsible: sessionResponsible || readLastResponsible('email') };
+    setEditingDispatch(nextDispatch);
+    setEditingDispatchMode('create');
+    setDispatchSnapshot(nextDispatch);
+    setDispatchFieldErrors([]);
+    setSuggestedFields([]);
     setModal('dispatch');
   }
 
@@ -431,6 +567,75 @@ export default function App() {
     setViewingDispatch(null);
     setViewingDispatchFromCalendar(false);
     setViewingDay('');
+    clearDispatchSnapshot();
+    setDispatchFieldErrors([]);
+    setSuggestedFields([]);
+    setPendingDiscardAction(null);
+  }
+
+  function requestModalClose() {
+    requestDiscardOrRun(closeModal);
+  }
+
+  function requestDiscardOrRun(run: () => void) {
+    if (isDispatchDirty) {
+      setPendingDiscardAction({ run });
+      return;
+    }
+    run();
+  }
+
+  function continueEditing() {
+    setPendingDiscardAction(null);
+  }
+
+  function discardChanges() {
+    const action = pendingDiscardAction;
+    setPendingDiscardAction(null);
+    if (action) action.run();
+  }
+
+  function setDispatchSnapshot(dispatch: Dispatch) {
+    initialDispatchRef.current = { ...dispatch, attachments: [...(dispatch.attachments || [])] };
+    initialDispatchSnapshotRef.current = dispatchSnapshot(dispatch);
+  }
+
+  function clearDispatchSnapshot() {
+    initialDispatchRef.current = null;
+    initialDispatchSnapshotRef.current = '';
+  }
+
+  function changeEditingDispatchChannel(channel: DispatchChannel) {
+    if (editingDispatch.channel === channel) return;
+    const run = () => {
+      const baseDispatch = initialDispatchRef.current || editingDispatch;
+      setEditingDispatch({ ...baseDispatch, channel });
+      setDispatchFieldErrors([]);
+      setSuggestedFields([]);
+    };
+    requestDiscardOrRun(run);
+  }
+
+  function updateEditingCampaign(campaign: string) {
+    const matchingBases = state.bases.filter(base => base.campaign === campaign);
+    if (!editingDispatch.baseId && matchingBases.length === 1) {
+      setEditingDispatch({ ...editingDispatch, campaign, baseId: matchingBases[0].id });
+      setSuggestedFields(['base']);
+      return;
+    }
+    setEditingDispatch({ ...editingDispatch, campaign });
+    setSuggestedFields([]);
+  }
+
+  function updateEditingBase(baseId: string) {
+    const base = state.bases.find(item => item.id === baseId);
+    if (base && !editingDispatch.campaign) {
+      setEditingDispatch({ ...editingDispatch, baseId, campaign: base.campaign });
+      setSuggestedFields(['campanha']);
+      return;
+    }
+    setEditingDispatch({ ...editingDispatch, baseId });
+    setSuggestedFields([]);
   }
 
   async function submitDispatch(event: FormEvent) {
@@ -439,6 +644,7 @@ export default function App() {
     const draft = { ...editingDispatch, responsible };
     const missing = shouldValidateReadiness(draft.status) ? missingReadyDispatchFields(draft) : [];
     if (missing.length) {
+      setDispatchFieldErrors(missing);
       setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
       return;
     }
@@ -461,17 +667,23 @@ export default function App() {
       createdAt: editingDispatch.createdAt || now,
       updatedAt: now
     };
-    const next = editingDispatch.id
+    const wasEditing = editingDispatchMode === 'edit';
+    const next = wasEditing
       ? state.dispatches.map(dispatch => dispatch.id === item.id ? item : dispatch)
       : [...state.dispatches, item];
-    closeModal();
-    await persist({
+    const saved = await persist({
       ...state,
       dispatches: next,
       campaigns: unique([...state.campaigns, item.campaign]),
       audiences: unique([...state.audiences, item.audience]),
       responsibles: unique([...state.responsibles, item.responsible])
     });
+    if (!saved) return;
+    rememberLastResponsible(item.channel, item.responsible);
+    setDispatchSnapshot(item);
+    setDispatchFieldErrors([]);
+    setSavedMessage(dispatchSavedFeedback(item.status, wasEditing));
+    closeModal();
   }
 
   async function submitBase(event: FormEvent) {
@@ -496,13 +708,16 @@ export default function App() {
     const next = editingBase.id
       ? state.bases.map(base => base.id === item.id ? item : base)
       : [...state.bases, item];
-    closeModal();
-    await persist({
+    const wasEditing = Boolean(editingBase.id);
+    const saved = await persist({
       ...state,
       bases: next,
       campaigns: unique([...state.campaigns, item.campaign]),
       responsibles: unique([...state.responsibles, item.responsible])
     });
+    if (!saved) return;
+    setSavedMessage(wasEditing ? 'Base atualizada.' : 'Cadastro criado.');
+    closeModal();
   }
 
   async function changeStatus(id: string, status: DispatchStatus) {
@@ -511,14 +726,15 @@ export default function App() {
     if (target && shouldValidateReadiness(status)) {
       const missing = missingReadyDispatchFields({ ...target, status });
       if (missing.length) {
-        setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+        setError(`Não foi possível marcar como pronto: informe ${missing.join(', ')}.`);
         return;
       }
     }
     const next = current.dispatches.map(dispatch =>
       dispatch.id === id ? { ...dispatch, status, updatedAt: new Date().toISOString() } : dispatch
     );
-    await persist({ ...current, dispatches: next });
+    const saved = await persist({ ...current, dispatches: next });
+    if (saved) setSavedMessage(statusFeedback(status));
   }
 
   function setEditingDispatchStatus(status: DispatchStatus) {
@@ -526,12 +742,26 @@ export default function App() {
       const responsible = sessionResponsible || editingDispatch.responsible.trim();
       const missing = missingReadyDispatchFields({ ...editingDispatch, responsible, status });
       if (missing.length) {
+        setDispatchFieldErrors(missing);
         setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
         return;
       }
     }
+    setDispatchFieldErrors([]);
     setError('');
     setEditingDispatch({ ...editingDispatch, status });
+  }
+
+  function dispatchSavedFeedback(status: DispatchStatus, wasEditing: boolean) {
+    if (status === 'Pronto para disparo') return 'Disparo marcado como pronto.';
+    if (status === 'Planejado' || status === 'Em produção') return wasEditing ? 'Disparo atualizado.' : 'Rascunho salvo.';
+    return wasEditing ? 'Disparo atualizado.' : 'Disparo salvo.';
+  }
+
+  function statusFeedback(status: DispatchStatus) {
+    if (status === 'Pronto para disparo') return 'Disparo marcado como pronto.';
+    if (status === 'Enviado') return 'Disparo marcado como enviado.';
+    return 'Disparo atualizado.';
   }
 
   async function deleteDispatches(ids: string[]) {
@@ -553,7 +783,8 @@ export default function App() {
     const clean = value.trim();
     if (!clean) return;
     if (state[key].some(item => item.toLowerCase() === clean.toLowerCase())) return;
-    await persist({ ...state, [key]: unique([...state[key], clean]) });
+    const saved = await persist({ ...state, [key]: unique([...state[key], clean]) });
+    if (saved) setSavedMessage('Cadastro criado.');
   }
 
   async function updateCatalogItem(key: CatalogKey, oldValue: string, newValue: string) {
@@ -572,7 +803,8 @@ export default function App() {
       nextState.dispatches = state.dispatches.map(item => item.responsible === oldValue ? { ...item, responsible: clean } : item);
       nextState.bases = state.bases.map(item => item.responsible === oldValue ? { ...item, responsible: clean } : item);
     }
-    await persist(nextState, { key, value: oldValue });
+    const saved = await persist(nextState, { key, value: oldValue });
+    if (saved) setSavedMessage('Cadastro atualizado.');
   }
 
   async function removeCatalogItems(key: CatalogKey, values: string[]) {
@@ -591,7 +823,8 @@ export default function App() {
       nextState.dispatches = state.dispatches.map(item => selectedSet.has(item.responsible) ? { ...item, responsible: '' } : item);
       nextState.bases = state.bases.map(item => selectedSet.has(item.responsible) ? { ...item, responsible: '' } : item);
     }
-    await persist(nextState, selected.map(value => ({ key, value })));
+    const saved = await persist(nextState, selected.map(value => ({ key, value })));
+    if (saved) setSavedMessage('Cadastro removido.');
   }
 
   if (authChecking) {
@@ -629,6 +862,33 @@ export default function App() {
     responsible: sessionResponsible || editingDispatch.responsible
   });
   const readinessCompleted = readinessChecks.filter(item => item.done).length;
+  const currentMissingReadyFields = missingReadyDispatchFields({
+    ...editingDispatch,
+    responsible: sessionResponsible || editingDispatch.responsible
+  });
+  const dispatchFieldErrorSet = new Set(dispatchFieldErrors.filter(field => currentMissingReadyFields.includes(field)));
+  const fieldError = (field: string, message: string) =>
+    dispatchFieldErrorSet.has(field) ? <small className="fieldError">{message}</small> : null;
+  const suggestionHint = (field: string, message: string) =>
+    suggestedFields.includes(field) ? <small className="fieldHint">{message}</small> : null;
+  const activeFilterChips = [
+    filters.q ? { key: 'q' as FilterKey, label: `Busca: ${filters.q}`, value: '' } : null,
+    filters.campaign ? { key: 'campaign' as FilterKey, label: `Campanha: ${filters.campaign}`, value: '' } : null,
+    filters.audience ? { key: 'audience' as FilterKey, label: `Público: ${filters.audience}`, value: '' } : null,
+    filters.status ? { key: 'status' as FilterKey, label: `Status: ${filters.status}`, value: '' } : null,
+    filters.base ? { key: 'base' as FilterKey, label: `Base: ${state.bases.find(base => base.id === filters.base)?.mainBase || filters.base}`, value: '' } : null,
+    filters.responsible ? { key: 'responsible' as FilterKey, label: `Responsável: ${filters.responsible}`, value: '' } : null,
+    filters.validation ? { key: 'validation' as FilterKey, label: `Validação: ${filters.validation}`, value: '' } : null,
+    filters.start ? { key: 'start' as FilterKey, label: `Data inicial: ${fmtDate(filters.start)}`, value: '' } : null,
+    filters.end ? { key: 'end' as FilterKey, label: `Data final: ${fmtDate(filters.end)}`, value: '' } : null,
+    filters.pending ? { key: 'pending' as FilterKey, label: 'Pendentes', value: false } : null,
+    filters.sent ? { key: 'sent' as FilterKey, label: 'Enviados', value: false } : null,
+    filters.alert ? { key: 'alert' as FilterKey, label: 'Com alerta', value: false } : null,
+    filters.overlap ? { key: 'overlap' as FilterKey, label: 'Com sobreposição', value: false } : null,
+    filters.missingBase ? { key: 'missingBase' as FilterKey, label: 'Sem base', value: false } : null,
+    filters.staleBase ? { key: 'staleBase' as FilterKey, label: 'Base desatualizada', value: false } : null,
+    filters.readyOnly ? { key: 'readyOnly' as FilterKey, label: 'Pronto/enviado', value: false } : null
+  ].filter(Boolean) as Array<{ key: FilterKey; label: string; value: string | boolean }>;
 
   return (
     <div className="appShell">
@@ -680,7 +940,10 @@ export default function App() {
             <div className="headerMenuPanel">
               <button type="button" className="menuRefresh" onClick={() => {
                 setHeaderMenuOpen(false);
-                refreshState();
+                requestDiscardOrRun(() => {
+                  closeModal();
+                  refreshState();
+                });
               }} disabled={loading || saving}>{loading ? 'Recarregando...' : 'Recarregar'}</button>
               <a className="menuFormatter" href="https://formatador-rd.vercel.app/" target="_blank" rel="noreferrer" onClick={() => setHeaderMenuOpen(false)}>Unigran Formater</a>
               <button type="button" className="menuLogout" onClick={() => {
@@ -694,8 +957,7 @@ export default function App() {
 
         <div className="app">
 
-      {error && <div className="error">{error}</div>}
-      {savedMessage && !error && <div className="success">{savedMessage}</div>}
+      {feedback && <div className={`feedback ${feedback.type}`} role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.message}</div>}
 
       {tab === 'overview' && (
         <OverviewDashboard
@@ -749,17 +1011,30 @@ export default function App() {
           <section className="panel">
             <div className="filterToolbar">
               <button className="btn primary newDispatchButton" onClick={() => openDispatch()}>Novo disparo</button>
-              <button className="btn ghost small" onClick={() => setPeriod(7)}>Próximos 7 dias</button>
-              <button className="btn ghost small" onClick={() => setPeriod(15)}>Próximos 15 dias</button>
-              <button className="btn ghost small" onClick={() => setPeriod(30)}>Próximos 30 dias</button>
+              <input className="quickSearch" placeholder="Buscar..." value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
+              <select className="quickFilter" value="" onChange={event => setPeriodPreset(event.target.value)}>
+                <option value="">Período</option>
+                <option value="7">Próximos 7 dias</option>
+                <option value="15">Próximos 15 dias</option>
+                <option value="30">Próximos 30 dias</option>
+              </select>
+              <Select value={filters.status} values={STATUS} placeholder="Status" onChange={value => updateFilter('status', value)} />
               <button className="btn ghost small" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded(current => !current)}>☷ Mais filtros</button>
-              <button className="btn ghost small" onClick={() => setFilters(defaultFilters())}>Limpar filtros</button>
+              <button className="btn ghost small" onClick={clearCurrentFilters}>Limpar filtros</button>
             </div>
+            {activeFilterChips.length > 0 && (
+              <div className="activeFilterChips" aria-label="Filtros ativos">
+                {activeFilterChips.map(chip => (
+                  <button type="button" key={`${chip.key}-${chip.label}`} onClick={() => updateFilter(chip.key, chip.value)}>
+                    {chip.label} <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className={`filterBoard ${filtersExpanded ? 'expanded' : ''}`}>
               <div className="filterGroup searchGroup">
-                <span>Busca e período</span>
+                <span>Período avançado</span>
                 <div className="filterRow dateRow">
-                  <input placeholder="Buscar por ID, campanha, template ou assunto" value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
                   <input type="date" value={filters.start} onChange={event => updateFilter('start', event.target.value)} />
                   <input type="date" value={filters.end} onChange={event => updateFilter('end', event.target.value)} />
                 </div>
@@ -769,7 +1044,6 @@ export default function App() {
                 <div className="filterRow selectRow">
                   <Select value={filters.campaign} values={campaigns} placeholder="Campanha" onChange={value => updateFilter('campaign', value)} />
                   <Select value={filters.audience} values={audiences} placeholder="Público" onChange={value => updateFilter('audience', value)} />
-                  <Select value={filters.status} values={STATUS} placeholder="Status" onChange={value => updateFilter('status', value)} />
                   <Select value={filters.base} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Base" onChange={value => updateFilter('base', value)} />
                   <Select value={filters.responsible} values={responsibles} placeholder="Responsável" onChange={value => updateFilter('responsible', value)} />
                   <Select value={filters.validation} values={['green', 'yellow', 'red']} labels={new Map([['green', 'Base validada'], ['yellow', 'Conferir base'], ['red', 'Risco de envio']])} placeholder="Validação" onChange={value => updateFilter('validation', value)} />
@@ -806,6 +1080,9 @@ export default function App() {
               duplicateNames={duplicateNames}
               onView={openDispatchDetails}
               onEdit={openDispatch}
+              onDuplicate={duplicateDispatch}
+              onSyncCalendar={sendDispatchToCalendar}
+              onRemoveCalendar={dispatch => setCalendarDeleteTarget(dispatch)}
               onDelete={deleteDispatches}
               onStatus={changeStatus}
             />
@@ -898,31 +1175,32 @@ export default function App() {
       )}
 
       {modal === 'dispatch' && (
-        <div className="modalBackdrop" onMouseDown={closeModal}>
+        <div className="modalBackdrop" onMouseDown={requestModalClose}>
           <form className="modal dispatchFormModal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={editingDispatch.id ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={closeModal} />
+            <ModalHead title={editingDispatchMode === 'edit' ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={requestModalClose} />
             <div className="dispatchFormLayout">
             <div className="dispatchFormContent">
             <div className="channelSelector">
-              <button type="button" className={editingDispatch.channel === 'email' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'email' }))}>✉ E-mail</button>
-              <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'whatsapp' }))}>◉ WhatsApp</button>
-              <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => setEditingDispatch(current => ({ ...current, channel: 'html_email' }))}>◇ E-mail HTML</button>
+              <button type="button" className={editingDispatch.channel === 'email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('email')}>✉ E-mail</button>
+              <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('whatsapp')}>◉ WhatsApp</button>
+              <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('html_email')}>◇ E-mail HTML</button>
             </div>
             <div className="modalGrid">
               <Field label="Data de disparo">
                 <BrazilianDatePicker
-                  required
                   value={editingDispatch.date}
                   onChange={value => setEditingDispatch({ ...editingDispatch, date: value })}
                 />
+                {fieldError('data', 'Informe a data antes de marcar como pronto.')}
               </Field>
               <Field label="Hora do disparo">
                 <TwentyFourHourPicker
                   value={editingDispatch.time}
                   onChange={value => setEditingDispatch({ ...editingDispatch, time: value })}
                 />
+                {fieldError('horario', 'Informe o horário antes de marcar como pronto.')}
               </Field>
-              <Field label="Nome do template"><input value={editingDispatch.templateName} onChange={event => setEditingDispatch({ ...editingDispatch, templateName: event.target.value })} /></Field>
+              <Field label="Nome do template"><input value={editingDispatch.templateName} onChange={event => setEditingDispatch({ ...editingDispatch, templateName: event.target.value })} />{fieldError('template', 'Informe o template antes de marcar como pronto.')}</Field>
               <Field label="Integração"><Select value={editingDispatch.chip} values={CHIP_OPTIONS} placeholder="Selecione" onChange={value => setEditingDispatch({ ...editingDispatch, chip: value as DispatchChip })} /></Field>
               <Field label="Campanha">
                 <SelectWithCreate
@@ -930,12 +1208,14 @@ export default function App() {
                   values={campaigns}
                   placeholder="Selecione"
                   createLabel="Adicionar campanha"
-                  onChange={value => setEditingDispatch({ ...editingDispatch, campaign: value })}
+                  onChange={updateEditingCampaign}
                   onCreate={async value => {
                     await addCatalogItem('campaigns', value);
                     setEditingDispatch(current => ({ ...current, campaign: value.trim() }));
                   }}
                 />
+                {suggestionHint('campanha', 'Campanha sugerida pela base selecionada.')}
+                {fieldError('campanha', 'Informe a campanha antes de marcar como pronto.')}
               </Field>
               <Field label="Público">
                 <SelectWithCreate
@@ -950,9 +1230,10 @@ export default function App() {
                     setEditingDispatch(current => ({ ...current, audience: value.trim() }));
                   }}
                 />
+                {fieldError('publico', 'Informe o público antes de marcar como pronto.')}
               </Field>
               <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatchStatus(value as DispatchStatus)} /></Field>
-              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={value => setEditingDispatch({ ...editingDispatch, baseId: value })} /></Field>
+              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={updateEditingBase} />{suggestionHint('base', 'Base sugerida pela campanha selecionada.')}{fieldError('base', 'Selecione uma base antes de continuar.')}</Field>
               <Field label="Responsável">
                 {sessionResponsible ? (
                   <input readOnly value={sessionResponsible} />
@@ -970,14 +1251,16 @@ export default function App() {
                     }}
                   />
                 )}
+                {fieldError('responsavel', 'Informe o responsável antes de marcar como pronto.')}
               </Field>
-              <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} /></Field>
+              <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>
               {editingDispatch.channel !== 'html_email' && (
                 <Field label={editingDispatch.channel === 'whatsapp' ? 'Mensagem' : 'Conteúdo do e-mail (corpo)'} wide asGroup>
                   <RichTextEditor
                     value={editingDispatch.body}
                     onChange={value => setEditingDispatch({ ...editingDispatch, body: value })}
                   />
+                  {fieldError(editingDispatch.channel === 'whatsapp' ? 'mensagem' : 'conteudo', editingDispatch.channel === 'whatsapp' ? 'Informe a mensagem antes de marcar como pronto.' : 'Informe o conteúdo antes de marcar como pronto.')}
                 </Field>
               )}
               <Field label="Descrição" wide><textarea rows={3} value={editingDispatch.description} onChange={event => setEditingDispatch({ ...editingDispatch, description: event.target.value })} /></Field>
@@ -997,6 +1280,7 @@ export default function App() {
                     placeholder="<html>...</html>"
                     onChange={event => setEditingDispatch({ ...editingDispatch, htmlContent: event.target.value })}
                   />
+                  {fieldError('conteudo HTML', 'Informe o conteúdo HTML antes de marcar como pronto.')}
                 </Field>
               )}
             </div>
@@ -1011,7 +1295,7 @@ export default function App() {
               <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatchStatus('Pronto para disparo')}>✓ Marcar como pronto</button>
             </aside>
             </div>
-            <ModalFoot saving={saving} onClose={closeModal} />
+            <ModalFoot saving={saving} onClose={requestModalClose} />
           </form>
         </div>
       )}
@@ -1166,6 +1450,16 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {pendingDiscardAction && (
+        <ConfirmDialog
+          title="Descartar alterações?"
+          text="Existem alterações que ainda não foram salvas neste disparo."
+          safeLabel="Continuar editando"
+          confirmLabel="Descartar alterações"
+          onSafe={continueEditing}
+          onConfirm={discardChanges}
+        />
       )}
         </div>
       </main>

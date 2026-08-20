@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react';
 import type { BaseRule, Dispatch, DispatchStatus } from '../../types';
 import { dispatchValidation, fmtDate } from '../../logic';
-import { dispatchTime, duplicateNameCount } from '../../utils/app';
+import { dispatchDisplayName, dispatchTime, duplicateNameCount } from '../../utils/app';
 import { StatusSelect } from '../../components/forms/Controls';
 import { ValidationBadge } from '../../components/feedback/ValidationBadge';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
-export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onView, onEdit, onDelete, onStatus }: {
+export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onView, onEdit, onDuplicate, onSyncCalendar, onRemoveCalendar, onDelete, onStatus }: {
   dispatches: Dispatch[];
   bases: BaseRule[];
   overlaps: Map<string, Dispatch[]>;
   duplicateNames: Map<string, Dispatch[]>;
   onView: (dispatch: Dispatch) => void;
   onEdit: (dispatch: Dispatch) => void;
+  onDuplicate: (dispatch: Dispatch) => void;
+  onSyncCalendar: (dispatch: Dispatch) => void;
+  onRemoveCalendar: (dispatch: Dispatch) => void;
   onDelete: (ids: string[]) => Promise<void> | void;
   onStatus: (id: string, status: DispatchStatus) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [actionMenu, setActionMenu] = useState<{ id: string; top: number; left: number } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const selectedSet = new Set(selected);
@@ -36,13 +40,28 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
     setPage(current => Math.min(current, Math.max(1, Math.ceil(dispatches.length / pageSize))));
   }, [dispatches.length, pageSize]);
 
+  useEffect(() => {
+    if (!actionMenu) return undefined;
+    function closeMenu() {
+      setActionMenu(null);
+    }
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+    };
+  }, [actionMenu]);
+
   function toggleSelected(id: string, checked: boolean) {
     setConfirming(false);
+    setActionMenu(null);
     setSelected(current => checked ? [...new Set([...current, id])] : current.filter(item => item !== id));
   }
 
   function toggleAll(checked: boolean) {
     setConfirming(false);
+    setActionMenu(null);
     setSelected(checked ? visibleDispatches.map(dispatch => dispatch.id) : []);
   }
 
@@ -125,6 +144,7 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
               const validation = dispatchValidation(dispatch, bases);
               const conflicts = overlaps.get(dispatch.id) || [];
               const duplicateCount = duplicateNameCount(dispatch, duplicateNames);
+              const displayName = dispatchDisplayName(dispatch);
               return (
                 <tr
                   className="clickableRow"
@@ -144,7 +164,11 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                   </td>
                   <td className="date">{fmtDate(dispatch.date)}</td>
                   <td>{dispatchTime(dispatch.time)}</td>
-                  <td><span className="pill">{dispatch.campaign || 'Sem campanha'}</span><small>{dispatch.responsible || 'Sem responsável'}</small></td>
+                  <td className="dispatchNameCell">
+                    <strong>{displayName || 'Sem nome'}</strong>
+                    <span className="pill">{dispatch.campaign || 'Sem campanha'}</span>
+                    <small>{dispatch.responsible || 'Sem responsável'}</small>
+                  </td>
                   <td>{dispatch.audience || '-'}</td>
                   <td onClick={event => event.stopPropagation()}><StatusSelect value={dispatch.status} onChange={value => onStatus(dispatch.id, value)} /></td>
                   <td>
@@ -153,14 +177,51 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                     {duplicateCount > 0 && <small className="duplicateName">Mesmo nome em {duplicateCount} disparo(s)</small>}
                   </td>
                   <td className="actions" onClick={event => event.stopPropagation()}>
-                    {dispatch.status !== 'Enviado' && (
-                      <button className="sentQuickAction" onClick={() => onStatus(dispatch.id, 'Enviado')}>Enviado</button>
-                    )}
                     <button onClick={() => onEdit(dispatch)}>Editar</button>
-                    <button className="danger" onClick={() => {
-                      setSelected([dispatch.id]);
-                      setConfirming(true);
-                    }}>Excluir</button>
+                    <button onClick={() => onDuplicate(dispatch)}>Duplicar</button>
+                    <div className="rowActionMenu">
+                      <button
+                        type="button"
+                        className="rowActionMenuButton"
+                        aria-label="Mais ações"
+                        aria-expanded={actionMenu?.id === dispatch.id}
+                        onClick={event => {
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          setActionMenu(current => current?.id === dispatch.id
+                            ? null
+                            : {
+                              id: dispatch.id,
+                              top: rect.bottom + 6,
+                              left: Math.max(12, Math.min(rect.right - 190, window.innerWidth - 202))
+                            });
+                        }}
+                      >
+                        •••
+                      </button>
+                      {actionMenu?.id === dispatch.id && (
+                        <div className="rowActionMenuPanel floating" style={{ top: actionMenu.top, left: actionMenu.left }}>
+                          {dispatch.status !== 'Enviado' && (
+                            <button type="button" onClick={() => {
+                              setActionMenu(null);
+                              onStatus(dispatch.id, 'Enviado');
+                            }}>Marcar como enviado</button>
+                          )}
+                          <button type="button" disabled={dispatch.status !== 'Pronto para disparo'} onClick={() => {
+                            setActionMenu(null);
+                            onSyncCalendar(dispatch);
+                          }}>Sincronizar Calendar</button>
+                          <button type="button" onClick={() => {
+                            setActionMenu(null);
+                            onRemoveCalendar(dispatch);
+                          }}>Remover do Calendar</button>
+                          <button type="button" className="danger" onClick={() => {
+                            setActionMenu(null);
+                            setSelected([dispatch.id]);
+                            setConfirming(true);
+                          }}>Excluir</button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

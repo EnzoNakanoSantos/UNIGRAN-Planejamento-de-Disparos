@@ -19,4 +19,41 @@ export function ModalFoot({ saving, onClose }: { saving: boolean; onClose: () =>
   );
 }
 
-
+export function ConfirmDialog({
+  title,
+  text,
+  safeLabel,
+  confirmLabel,
+  onSafe,
+  onConfirm
+}: {
+  title: string;
+  text: string;
+  safeLabel: string;
+  confirmLabel: string;
+  onSafe: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modalBackdrop confirmDialogBackdrop" onMouseDown={onSafe}>
+      <div
+        className="confirmDialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-text"
+        onMouseDown={event => event.stopPropagation()}
+      >
+        <div className="confirmDialogIcon" aria-hidden="true">!</div>
+        <div className="confirmDialogContent">
+          <h2 id="confirm-dialog-title">{title}</h2>
+          <p id="confirm-dialog-text">{text}</p>
+        </div>
+        <div className="confirmDialogActions">
+          <button type="button" className="btn primary" onClick={onSafe}>{safeLabel}</button>
+          <button type="button" className="btn dangerStrong" onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
