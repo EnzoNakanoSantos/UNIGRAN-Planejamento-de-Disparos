@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toN8nCalendarEvent } from './calendar-event.js';
+import { missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -408,6 +409,13 @@ function fromDbBase(item) {
   };
 }
 
+function assertReadyDispatch(dispatch) {
+  const missing = missingReadyDispatchFields(dispatch);
+  if (missing.length) {
+    throw new Error(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+  }
+}
+
 function toDbOption(name) {
   const value = String(name || '').trim();
   return {
@@ -549,6 +557,9 @@ async function sendCalendarWebhook(body, user) {
   if (!dispatch) throw new Error('Disparo nao encontrado.');
   if (action === 'upsert' && dispatch.status !== 'Pronto para disparo') {
     throw new Error('Apenas disparos com status Pronto para disparo podem ser enviados ao Google Calendar.');
+  }
+  if (action === 'upsert') {
+    assertReadyDispatch(dispatch);
   }
   const base = context.baseRow ? fromDbBase(context.baseRow) : undefined;
   const data = await postCalendarWebhook(calendarWebhookPayload(action, dispatch, base, user));
@@ -717,6 +728,11 @@ async function saveState(state, user) {
   const basesById = new Map(state.bases.map(base => [base.id, base]));
   const cutoff = dispatchRetentionCutoff();
   const retainedStateDispatches = state.dispatches.filter(item => !isExpiredDispatch(item, cutoff));
+  for (const dispatch of retainedStateDispatches) {
+    if (shouldValidateReadiness(dispatch.status)) {
+      assertReadyDispatch(dispatch);
+    }
+  }
   const retainedIds = new Set(retainedStateDispatches.map(item => item.id));
   const dispatchesToDelete = current.dispatches.filter(item => !retainedIds.has(item.id) || isExpiredDispatch(item, cutoff));
 

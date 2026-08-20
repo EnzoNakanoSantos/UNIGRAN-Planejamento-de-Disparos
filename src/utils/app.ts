@@ -1,5 +1,6 @@
 import { CHIP_OPTIONS, RESPONSIBLE_BY_EMAIL, EXCEL_TYPES } from '../config/dispatch';
 import { uid } from '../logic';
+import { missingReadyDispatchFields } from '../../shared/dispatch-readiness.js';
 import type { AppState, BaseRule, Dispatch, DispatchChannel, DispatchChip, DispatchSortField, DispatchStatus, FileAttachment } from '../types';
 
 export function unique(values: string[]) {
@@ -43,9 +44,7 @@ export function normalizeState(data: AppState): AppState {
 }
 
 export function missingDispatchFields(dispatch: Dispatch) {
-  return [
-    !dispatch.responsible.trim() ? 'responsável' : ''
-  ].filter(Boolean);
+  return missingReadyDispatchFields(dispatch);
 }
 
 export function isRichHtml(value: string) {
@@ -246,4 +245,3 @@ export function missingBaseFields(base: BaseRule) {
     !base.expectedAction.trim() ? 'ação esperada' : ''
   ].filter(Boolean);
 }
-

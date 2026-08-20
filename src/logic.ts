@@ -1,4 +1,5 @@
 import type { BaseRule, Dispatch, Validation } from './types';
+import { missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
 
 export function uid(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -50,12 +51,15 @@ export function dispatchValidation(dispatch: Dispatch, bases: BaseRule[]): Valid
   const issues: string[] = [];
   const base = bases.find(item => item.id === dispatch.baseId);
   issues.push(...baseValidation(base).issues);
+  if (shouldValidateReadiness(dispatch.status)) {
+    issues.push(...missingReadyDispatchFields(dispatch).map(field => `Prontidao pendente: ${field}`));
+  }
   if (base?.lastUpdated && dispatch.date) {
     const gap = dateDiff(dispatch.date, base.lastUpdated);
     if (gap > 7) issues.push(`Base atualizada ${gap} dias antes do disparo`);
   }
   if (!issues.length) return { level: 'green', issues: [] };
-  const red = issues.some(issue => /principal|exclusão não/.test(issue));
+  const red = issues.some(issue => /principal|exclusão não|Prontidao pendente/.test(issue));
   return { level: red ? 'red' : 'yellow', issues: [...new Set(issues)] };
 }
 

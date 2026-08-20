@@ -22,6 +22,7 @@ import { IssueList, UpcomingList } from './features/dispatches/DashboardLists';
 import { useCalendar } from './features/calendar/useCalendar';
 import { useHeaderMenu } from './hooks/useHeaderMenu';
 import { OverviewDashboard } from './features/overview/OverviewDashboard';
+import { dispatchReadinessChecks, missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
@@ -150,6 +151,11 @@ export default function App() {
     }
 
     if (calendarOperationsRef.current.has(dispatch.id)) return;
+    const missing = missingReadyDispatchFields(dispatch);
+    if (missing.length) {
+      setError(`Complete o disparo antes de sincronizar: ${missing.join(', ')}.`);
+      return;
+    }
     calendarOperationsRef.current.add(dispatch.id);
 
     setError('');
@@ -431,9 +437,9 @@ export default function App() {
     event.preventDefault();
     const responsible = sessionResponsible || editingDispatch.responsible.trim();
     const draft = { ...editingDispatch, responsible };
-    const missing = missingDispatchFields(draft);
+    const missing = shouldValidateReadiness(draft.status) ? missingReadyDispatchFields(draft) : [];
     if (missing.length) {
-      setError(`Complete o disparo antes de salvar: ${missing.join(', ')}.`);
+      setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
       return;
     }
     const now = new Date().toISOString();
@@ -501,10 +507,31 @@ export default function App() {
 
   async function changeStatus(id: string, status: DispatchStatus) {
     const current = stateRef.current;
+    const target = current.dispatches.find(dispatch => dispatch.id === id);
+    if (target && shouldValidateReadiness(status)) {
+      const missing = missingReadyDispatchFields({ ...target, status });
+      if (missing.length) {
+        setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+        return;
+      }
+    }
     const next = current.dispatches.map(dispatch =>
       dispatch.id === id ? { ...dispatch, status, updatedAt: new Date().toISOString() } : dispatch
     );
     await persist({ ...current, dispatches: next });
+  }
+
+  function setEditingDispatchStatus(status: DispatchStatus) {
+    if (shouldValidateReadiness(status)) {
+      const responsible = sessionResponsible || editingDispatch.responsible.trim();
+      const missing = missingReadyDispatchFields({ ...editingDispatch, responsible, status });
+      if (missing.length) {
+        setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+        return;
+      }
+    }
+    setError('');
+    setEditingDispatch({ ...editingDispatch, status });
   }
 
   async function deleteDispatches(ids: string[]) {
@@ -597,17 +624,11 @@ export default function App() {
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase())
     .join('');
-  const readinessChecks = [
-    ['Data definida', Boolean(editingDispatch.date)],
-    ['Horário definido', Boolean(editingDispatch.time)],
-    ['Campanha selecionada', Boolean(editingDispatch.campaign)],
-    ['Público selecionado', Boolean(editingDispatch.audience)],
-    ['Base selecionada', Boolean(editingDispatch.baseId)],
-    ['Responsável definido', Boolean(sessionResponsible || editingDispatch.responsible)],
-    ['Template definido', Boolean(editingDispatch.templateName)],
-    ['Conteúdo preenchido', Boolean(editingDispatch.channel === 'html_email' ? editingDispatch.htmlContent : editingDispatch.body)]
-  ] as const;
-  const readinessCompleted = readinessChecks.filter(([, done]) => done).length;
+  const readinessChecks = dispatchReadinessChecks({
+    ...editingDispatch,
+    responsible: sessionResponsible || editingDispatch.responsible
+  });
+  const readinessCompleted = readinessChecks.filter(item => item.done).length;
 
   return (
     <div className="appShell">
@@ -930,14 +951,13 @@ export default function App() {
                   }}
                 />
               </Field>
-              <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatch({ ...editingDispatch, status: value as DispatchStatus })} /></Field>
+              <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatchStatus(value as DispatchStatus)} /></Field>
               <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={value => setEditingDispatch({ ...editingDispatch, baseId: value })} /></Field>
               <Field label="Responsável">
                 {sessionResponsible ? (
                   <input readOnly value={sessionResponsible} />
                 ) : (
                   <SelectWithCreate
-                    required
                     value={editingDispatch.responsible}
                     values={responsibles}
                     placeholder="Selecione"
@@ -953,7 +973,7 @@ export default function App() {
               </Field>
               <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} /></Field>
               {editingDispatch.channel !== 'html_email' && (
-                <Field label="Conteúdo do e-mail (corpo)" wide asGroup>
+                <Field label={editingDispatch.channel === 'whatsapp' ? 'Mensagem' : 'Conteúdo do e-mail (corpo)'} wide asGroup>
                   <RichTextEditor
                     value={editingDispatch.body}
                     onChange={value => setEditingDispatch({ ...editingDispatch, body: value })}
@@ -985,10 +1005,10 @@ export default function App() {
               <div className="readinessTop"><span>Prontidão</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
               <div className="readinessProgress"><i style={{ width: `${(readinessCompleted / readinessChecks.length) * 100}%` }} /></div>
               <ul>
-                {readinessChecks.map(([label, done]) => <li className={done ? 'done' : 'pending'} key={label}><span>{done ? '✓' : '!'}</span>{label}</li>)}
+                {readinessChecks.map(check => <li className={check.done ? 'done' : 'pending'} key={check.key}><span>{check.done ? '✓' : '!'}</span>{check.label}</li>)}
               </ul>
               {readinessCompleted < readinessChecks.length && <div className="readinessAlert"><strong>Complete os itens pendentes</strong><p>Revise os campos antes de marcar o disparo como pronto.</p></div>}
-              <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatch(current => ({ ...current, status: 'Pronto para disparo' }))}>✓ Marcar como pronto</button>
+              <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatchStatus('Pronto para disparo')}>✓ Marcar como pronto</button>
             </aside>
             </div>
             <ModalFoot saving={saving} onClose={closeModal} />
