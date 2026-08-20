@@ -13,11 +13,15 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT, 'dist');
 const INDEX_FILE = path.join(ROOT, 'index.html');
 const MAX_BODY_SIZE = 40_000_000;
+const DISPATCH_RETENTION_DAYS = 7;
+const RETENTION_TIME_ZONE = 'America/Campo_Grande';
+const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 loadEnvFile(path.join(ROOT, '.env'));
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_READY = Boolean(SUPABASE_URL && SUPABASE_KEY);
 const N8N_CALENDAR_WEBHOOK_URL = (process.env.N8N_CALENDAR_WEBHOOK_URL || '').trim();
 const N8N_CALENDAR_WEBHOOK_SECRET = (process.env.N8N_CALENDAR_WEBHOOK_SECRET || '').trim();
@@ -83,6 +87,50 @@ function safePositiveInteger(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
+function todayInTimeZone(timeZone = RETENTION_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function addDaysToISODate(dateValue, days) {
+  const [year, month, day] = String(dateValue || '').split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function dispatchRetentionCutoff() {
+  return addDaysToISODate(todayInTimeZone(), -DISPATCH_RETENTION_DAYS);
+}
+
+function dispatchDateValue(dispatch) {
+  return String(dispatch?.dispatch_date || dispatch?.date || '').slice(0, 10);
+}
+
+function isExpiredDispatch(dispatch, cutoff = dispatchRetentionCutoff()) {
+  const date = dispatchDateValue(dispatch);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= cutoff;
+}
+
+function retentionSystemUser() {
+  return {
+    accessToken: '',
+    email: 'sistema@unigran.local',
+    name: 'Limpeza automatica',
+    role: 'system'
+  };
+}
+
 function n8nWebhookHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   if (N8N_CALENDAR_WEBHOOK_SECRET) {
@@ -113,6 +161,28 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15000) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function postCalendarWebhook(payload) {
+  if (!N8N_CALENDAR_WEBHOOK_URL) {
+    throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
+  }
+
+  const { response, data } = await fetchJsonWithTimeout(N8N_CALENDAR_WEBHOOK_URL, {
+    method: 'POST',
+    headers: n8nWebhookHeaders(),
+    body: JSON.stringify(payload)
+  }, N8N_CALENDAR_WEBHOOK_TIMEOUT_MS);
+
+  if (!response.ok) {
+    throw new Error(`n8n ${response.status}: ${safeWebhookErrorMessage(data)}`);
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('n8n: resposta invalida do webhook. Configure o workflow para responder JSON.');
+  }
+
+  return data;
 }
 
 function safeWebhookErrorMessage(data) {
@@ -376,7 +446,11 @@ function revisionFromRows(groups) {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
-async function loadState(accessToken) {
+async function loadState(accessToken, options = {}) {
+  if (options.cleanupUser) {
+    await cleanupExpiredDispatches(options.cleanupUser);
+  }
+
   const [dispatches, bases, campaigns, audiences, responsibles] = await Promise.all([
     supabaseRequest(TABLES.dispatches, '?select=*&order=dispatch_date.asc', { accessToken }),
     supabaseRequest(TABLES.bases, '?select=*&order=campaign.asc', { accessToken }),
@@ -429,6 +503,35 @@ function revisionAfterDispatchUpdate(groups, updatedDispatch) {
   });
 }
 
+function calendarWebhookPayload(action, dispatch, base, user) {
+  const event = toN8nCalendarEvent(dispatch, base);
+  return {
+    source: 'unigran-email-planner',
+    action,
+    calendarEventId: event.googleEventId,
+    dispatchId: dispatch.id,
+    requestedBy: {
+      email: user.email,
+      name: user.name,
+      role: user.role
+    },
+    count: 1,
+    event,
+    events: [event]
+  };
+}
+
+async function deleteDispatchCalendarEvent(dispatch, user, base) {
+  if (!dispatch.googleCalendarEventId) return;
+  await postCalendarWebhook(calendarWebhookPayload('delete', dispatch, base, user));
+}
+
+async function deleteDispatchCalendarEvents(dispatches, user, basesById = new Map()) {
+  for (const dispatch of dispatches) {
+    await deleteDispatchCalendarEvent(dispatch, user, basesById.get(dispatch.baseId));
+  }
+}
+
 async function sendCalendarWebhook(body, user) {
   if (!N8N_CALENDAR_WEBHOOK_URL) {
     throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
@@ -447,36 +550,8 @@ async function sendCalendarWebhook(body, user) {
   if (action === 'upsert' && dispatch.status !== 'Pronto para disparo') {
     throw new Error('Apenas disparos com status Pronto para disparo podem ser enviados ao Google Calendar.');
   }
-  const event = toN8nCalendarEvent(dispatch, context.baseRow ? fromDbBase(context.baseRow) : undefined);
-
-  const payload = {
-    source: 'unigran-email-planner',
-    action,
-    calendarEventId: event.googleEventId,
-    dispatchId: dispatch.id,
-    requestedBy: {
-      email: user.email,
-      name: user.name,
-      role: user.role
-    },
-    count: 1,
-    event,
-    events: [event]
-  };
-
-  const { response, data } = await fetchJsonWithTimeout(N8N_CALENDAR_WEBHOOK_URL, {
-    method: 'POST',
-    headers: n8nWebhookHeaders(),
-    body: JSON.stringify(payload)
-  }, N8N_CALENDAR_WEBHOOK_TIMEOUT_MS);
-
-  if (!response.ok) {
-    throw new Error(`n8n ${response.status}: ${safeWebhookErrorMessage(data)}`);
-  }
-
-  if (!data || typeof data !== 'object') {
-    throw new Error('n8n: resposta invalida do webhook. Configure o workflow para responder JSON.');
-  }
+  const base = context.baseRow ? fromDbBase(context.baseRow) : undefined;
+  const data = await postCalendarWebhook(calendarWebhookPayload(action, dispatch, base, user));
 
   const returnedEventId = String(data?.eventId || data?.googleEventId || '').trim();
   if (action === 'upsert' && !returnedEventId) {
@@ -548,6 +623,55 @@ function postgrestList(values) {
     .join(',');
 }
 
+async function deleteRowsByIds(table, ids, accessToken) {
+  if (!ids.length) return;
+  await supabaseRequest(table, `?id=in.(${encodeURIComponent(postgrestList(ids))})`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+    accessToken
+  });
+}
+
+async function cleanupExpiredDispatches(user) {
+  const cutoff = dispatchRetentionCutoff();
+  if (!cutoff) return { deleted: 0, cutoff };
+  const accessToken = user.accessToken || '';
+
+  const expiredRows = await supabaseRequest(
+    TABLES.dispatches,
+    `?select=*&dispatch_date=lte.${encodeURIComponent(cutoff)}&order=dispatch_date.asc`,
+    { accessToken }
+  );
+  if (!expiredRows.length) return { deleted: 0, cutoff };
+
+  const expiredDispatches = expiredRows.map(fromDbDispatch);
+  const baseIds = [...new Set(expiredDispatches.map(item => item.baseId).filter(Boolean))];
+  const baseRows = baseIds.length
+    ? await supabaseRequest(TABLES.bases, `?select=*&id=in.(${encodeURIComponent(postgrestList(baseIds))})`, { accessToken })
+    : [];
+  const basesById = new Map(baseRows.map(item => [item.id, fromDbBase(item)]));
+
+  await deleteDispatchCalendarEvents(expiredDispatches, user, basesById);
+  await deleteRowsByIds(TABLES.dispatches, expiredDispatches.map(item => item.id), accessToken);
+
+  console.info('[dispatch-retention]', {
+    cutoff,
+    deleted: expiredDispatches.length,
+    withCalendarEvent: expiredDispatches.filter(item => item.googleCalendarEventId).length
+  });
+
+  return { deleted: expiredDispatches.length, cutoff };
+}
+
+async function runRetentionSweep() {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return;
+  try {
+    await cleanupExpiredDispatches(retentionSystemUser());
+  } catch (error) {
+    console.error('[dispatch-retention]', error.message || error);
+  }
+}
+
 async function deleteMissingRows(table, ids, accessToken) {
   if (!ids.length) {
     await clearTable(table, accessToken);
@@ -572,7 +696,8 @@ async function deleteCatalogRows(deletedCatalogs, accessToken) {
   }
 }
 
-async function saveState(state, accessToken) {
+async function saveState(state, user) {
+  const accessToken = user.accessToken;
   if (
     !Array.isArray(state.dispatches) ||
     !Array.isArray(state.bases) ||
@@ -589,10 +714,18 @@ async function saveState(state, accessToken) {
   }
 
   const bases = state.bases.map(toDbBase);
+  const basesById = new Map(state.bases.map(base => [base.id, base]));
+  const cutoff = dispatchRetentionCutoff();
+  const retainedStateDispatches = state.dispatches.filter(item => !isExpiredDispatch(item, cutoff));
+  const retainedIds = new Set(retainedStateDispatches.map(item => item.id));
+  const dispatchesToDelete = current.dispatches.filter(item => !retainedIds.has(item.id) || isExpiredDispatch(item, cutoff));
+
+  await deleteDispatchCalendarEvents(dispatchesToDelete, user, basesById);
+
   const currentCalendarIds = new Map(
     current.dispatches.map(item => [item.id, item.googleCalendarEventId || ''])
   );
-  const dispatches = state.dispatches.map(item => toDbDispatch({
+  const dispatches = retainedStateDispatches.map(item => toDbDispatch({
     ...item,
     googleCalendarEventId: item.googleCalendarEventId || currentCalendarIds.get(item.id) || ''
   }));
@@ -688,7 +821,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const user = await requireAuthorizedUser(req);
       sendJson(res, 200, {
-        ...(await loadState(user.accessToken)),
+        ...(await loadState(user.accessToken, { cleanupUser: user })),
         database: 'supabase'
       });
       return;
@@ -697,9 +830,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT' && url.pathname === '/api/state') {
       const user = await requireAuthorizedUser(req);
       const state = await readJsonBody(req);
-      await saveState(state, user.accessToken);
+      await saveState(state, user);
       sendJson(res, 200, {
-        ...(await loadState(user.accessToken)),
+        ...(await loadState(user.accessToken, { cleanupUser: user })),
         database: 'supabase'
       });
       return;
@@ -734,4 +867,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Aplicacao rodando em http://0.0.0.0:${PORT}`);
   console.log(`Banco ativo: Supabase`);
+  runRetentionSweep();
 });
+
+setInterval(runRetentionSweep, RETENTION_SWEEP_INTERVAL_MS).unref();
