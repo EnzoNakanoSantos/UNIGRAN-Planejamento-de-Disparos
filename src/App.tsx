@@ -416,18 +416,24 @@ export default function App() {
   }, [channelDispatches]);
 
   const incompleteItems = useMemo(() => {
-    const dispatches = channelDispatches
-      .filter(item => !item.responsible)
-      .map(item => `${fmtDate(item.date)} - disparo sem ${missingDispatchFields(item).join(', ')}`);
+    const dispatches = channelDispatches.flatMap(item => {
+      const missing = missingDispatchFields(item);
+
+      return missing.length > 0
+        ? [`${fmtDate(item.date)} - disparo sem ${missing.join(', ')}`]
+        : [];
+    });
+
     const bases = state.bases
       .filter(item => !item.responsible || !item.mainBase || !item.expectedAction)
       .map(item => `${item.mainBase || 'Regra de base'} - regra sem ${missingBaseFields(item).join(', ')}`);
+
     const duplicateWarnings = [...duplicateNames.entries()]
       .filter(([, items]) => items.length > 1)
       .map(([name, items]) => `Nome duplicado: ${name} (${items.length} disparos)`);
+
     return [...duplicateWarnings, ...dispatches, ...bases].slice(0, 8);
   }, [channelDispatches, duplicateNames, state.bases]);
-
   const campaigns = unique([...state.campaigns, ...state.dispatches.map(item => item.campaign), ...state.bases.map(item => item.campaign)]);
   const audiences = unique([...state.audiences, ...state.dispatches.map(item => item.audience)]);
   const responsibles = unique([...state.responsibles, ...state.dispatches.map(item => item.responsible), ...state.bases.map(item => item.responsible)]);
