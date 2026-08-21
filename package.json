@@ -5,7 +5,8 @@
   "description": "Aplicacao local para planejamento de disparos de e-mails.",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "dev:full": "node scripts/dev-full.mjs",
     "server": "node backend/server.js",
     "start": "node backend/server.js",
     "build": "vite build",

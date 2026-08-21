@@ -25,6 +25,7 @@ import { OverviewDashboard } from './features/overview/OverviewDashboard';
 import { dispatchReadinessChecks, missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
 import { dispatchSnapshot, hasUnsavedDispatchChanges } from '../shared/dirty-state.js';
 import { duplicateDispatchDraft } from '../shared/dispatch-duplicate.js';
+import { suggestDispatchFields } from '../shared/dispatch-smart-fill.js';
 
 type FeedbackType = 'success' | 'warning' | 'error' | 'info';
 type Feedback = { type: FeedbackType; message: string };
@@ -504,14 +505,15 @@ export default function App() {
     const latest = dispatch
       ? stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch
       : null;
+    const rememberedResponsible = sessionResponsible ? '' : readLastResponsible(activeChannel);
     const nextDispatch = latest
       ? { ...latest }
-      : { ...emptyDispatch(activeChannel), responsible: sessionResponsible || readLastResponsible(activeChannel) };
+      : { ...emptyDispatch(activeChannel), responsible: sessionResponsible || rememberedResponsible };
     setEditingDispatch(nextDispatch);
     setEditingDispatchMode(latest ? 'edit' : 'create');
     setDispatchSnapshot(nextDispatch);
     setDispatchFieldErrors([]);
-    setSuggestedFields([]);
+    setSuggestedFields(!latest && rememberedResponsible ? ['responsavel'] : []);
     setModal('dispatch');
   }
 
@@ -534,12 +536,13 @@ export default function App() {
   }
 
   function openDispatchForDate(date: string) {
-    const nextDispatch = { ...emptyDispatch('email'), date, responsible: sessionResponsible || readLastResponsible('email') };
+    const rememberedResponsible = sessionResponsible ? '' : readLastResponsible('email');
+    const nextDispatch = { ...emptyDispatch('email'), date, responsible: sessionResponsible || rememberedResponsible };
     setEditingDispatch(nextDispatch);
     setEditingDispatchMode('create');
     setDispatchSnapshot(nextDispatch);
     setDispatchFieldErrors([]);
-    setSuggestedFields([]);
+    setSuggestedFields(rememberedResponsible ? ['responsavel'] : []);
     setModal('dispatch');
   }
 
@@ -615,33 +618,39 @@ export default function App() {
     if (editingDispatch.channel === channel) return;
     const run = () => {
       const baseDispatch = initialDispatchRef.current || editingDispatch;
-      setEditingDispatch({ ...baseDispatch, channel });
+      const rememberedResponsible = !sessionResponsible && !baseDispatch.responsible ? readLastResponsible(channel) : '';
+      const nextDispatch = {
+        ...baseDispatch,
+        channel,
+        responsible: sessionResponsible || baseDispatch.responsible || rememberedResponsible
+      };
+      setEditingDispatch(nextDispatch);
       setDispatchFieldErrors([]);
-      setSuggestedFields([]);
+      setSuggestedFields(rememberedResponsible ? ['responsavel'] : []);
     };
     requestDiscardOrRun(run);
   }
 
+  function applyDispatchSuggestions(draft: Dispatch) {
+    const { patch, suggestedFields: nextSuggestedFields } = suggestDispatchFields({
+      dispatches: state.dispatches,
+      bases: state.bases,
+      draft
+    });
+    setEditingDispatch({ ...draft, ...patch });
+    setSuggestedFields(nextSuggestedFields);
+  }
+
   function updateEditingCampaign(campaign: string) {
-    const matchingBases = state.bases.filter(base => base.campaign === campaign);
-    if (!editingDispatch.baseId && matchingBases.length === 1) {
-      setEditingDispatch({ ...editingDispatch, campaign, baseId: matchingBases[0].id });
-      setSuggestedFields(['base']);
-      return;
-    }
-    setEditingDispatch({ ...editingDispatch, campaign });
-    setSuggestedFields([]);
+    applyDispatchSuggestions({ ...editingDispatch, campaign });
+  }
+
+  function updateEditingAudience(audience: string) {
+    applyDispatchSuggestions({ ...editingDispatch, audience });
   }
 
   function updateEditingBase(baseId: string) {
-    const base = state.bases.find(item => item.id === baseId);
-    if (base && !editingDispatch.campaign) {
-      setEditingDispatch({ ...editingDispatch, baseId, campaign: base.campaign });
-      setSuggestedFields(['campanha']);
-      return;
-    }
-    setEditingDispatch({ ...editingDispatch, baseId });
-    setSuggestedFields([]);
+    applyDispatchSuggestions({ ...editingDispatch, baseId });
   }
 
   async function submitDispatch(event: FormEvent) {
@@ -1217,10 +1226,10 @@ export default function App() {
                   onChange={updateEditingCampaign}
                   onCreate={async value => {
                     await addCatalogItem('campaigns', value);
-                    setEditingDispatch(current => ({ ...current, campaign: value.trim() }));
+                    applyDispatchSuggestions({ ...editingDispatch, campaign: value.trim() });
                   }}
                 />
-                {suggestionHint('campanha', 'Campanha sugerida pela base selecionada.')}
+                {suggestionHint('campanha', 'Campanha sugerida por uma relação compatível já conhecida.')}
                 {fieldError('campanha', 'Informe a campanha antes de marcar como pronto.')}
               </Field>
               <Field label="Público">
@@ -1230,16 +1239,17 @@ export default function App() {
                   placeholder="Selecione"
                   createLabel="Adicionar público"
                   createPlaceholder="Nome do público"
-                  onChange={value => setEditingDispatch({ ...editingDispatch, audience: value })}
+                  onChange={updateEditingAudience}
                   onCreate={async value => {
                     await addCatalogItem('audiences', value);
-                    setEditingDispatch(current => ({ ...current, audience: value.trim() }));
+                    applyDispatchSuggestions({ ...editingDispatch, audience: value.trim() });
                   }}
                 />
+                {suggestionHint('publico', 'Público sugerido pelo histórico compatível desta modalidade.')}
                 {fieldError('publico', 'Informe o público antes de marcar como pronto.')}
               </Field>
               <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatchStatus(value as DispatchStatus)} /></Field>
-              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={updateEditingBase} />{suggestionHint('base', 'Base sugerida pela campanha selecionada.')}{fieldError('base', 'Selecione uma base antes de continuar.')}</Field>
+              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={updateEditingBase} />{suggestionHint('base', 'Base sugerida por uma relação compatível já conhecida.')}{fieldError('base', 'Selecione uma base antes de continuar.')}</Field>
               <Field label="Responsável">
                 {sessionResponsible ? (
                   <input readOnly value={sessionResponsible} />
@@ -1257,6 +1267,7 @@ export default function App() {
                     }}
                   />
                 )}
+                {suggestionHint('responsavel', 'Responsável sugerido pelo último uso nesta modalidade.')}
                 {fieldError('responsavel', 'Informe o responsável antes de marcar como pronto.')}
               </Field>
               <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>

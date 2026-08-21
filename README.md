@@ -8,6 +8,7 @@ Nada é criado automaticamente no Supabase. O servidor só lê e salva dados qua
 
 ```sh
 npm install
+npm run dev:full
 npm run server
 npm run dev
 & "C:\Program Files\nodejs\npm.cmd" run build
