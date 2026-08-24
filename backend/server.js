@@ -14,7 +14,7 @@ const ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT, 'dist');
 const INDEX_FILE = path.join(ROOT, 'index.html');
 const MAX_BODY_SIZE = 40_000_000;
-const DISPATCH_RETENTION_DAYS = 7;
+const DISPATCH_RETENTION_DAYS = 3650; //10 anos
 const RETENTION_TIME_ZONE = 'America/Campo_Grande';
 const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 

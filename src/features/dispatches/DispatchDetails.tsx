@@ -27,52 +27,76 @@ export function DispatchDetails({ dispatch, base, validation, conflicts, duplica
   duplicateCount: number;
 }) {
   const displayName = dispatchDisplayName(dispatch);
+  const content = dispatch.channel === 'html_email'
+    ? dispatch.htmlContent
+    : dispatch.channel === 'whatsapp'
+      ? dispatch.body
+      : [dispatch.subject, dispatch.body].filter(Boolean).join('\n\n');
+  const alerts = [
+    ...validation.issues,
+    ...(conflicts.length ? [`Sobreposição com ${conflicts.length} disparo(s)`] : []),
+    ...(duplicateCount ? [`Mesmo nome em ${duplicateCount} outro(s) disparo(s)`] : [])
+  ];
+
   return (
-    <div className="detailContent">
+    <div className="detailContent calendarDispatchDetail">
       <div className="detailHero">
         <div>
           <span className={`channelBadge ${dispatch.channel || 'email'}`}>{channelName(dispatch.channel || 'email')}</span>
           <h3>{displayName || 'Disparo sem nome'}</h3>
           <p>{dispatch.campaign || 'Sem campanha'}{dispatch.audience ? ` para ${dispatch.audience}` : ''}</p>
         </div>
-        <ValidationBadge validation={validation} />
+        <div className="detailBadges">
+          <span className={`channelBadge ${dispatch.channel || 'email'}`}>{channelName(dispatch.channel || 'email')}</span>
+          <span className={`statusText ${statusClass(dispatch.status)}`}>● {dispatch.status}</span>
+        </div>
       </div>
 
-      <div className="detailGrid">
-        <DetailItem label="Data de disparo" value={fmtDate(dispatch.date)} />
-        <DetailItem label="Hora do disparo" value={dispatchTime(dispatch.time)} />
-        <DetailItem label="Criado em" value={fmtDate(isoDate(dispatch.createdAt))} />
-        <DetailItem label="Status" value={<span className={`statusText ${statusClass(dispatch.status)}`}>{dispatch.status}</span>} />
-        <DetailItem label="Nome do template" value={dispatch.templateName || '-'} />
-        <DetailItem label="Integração" value={dispatch.chip || '-'} />
+      <div className="detailGrid detailMainGrid">
+        <DetailItem label="Data" value={fmtDate(dispatch.date)} />
+        <DetailItem label="Horário" value={dispatchTime(dispatch.time)} />
         <DetailItem label="Campanha" value={dispatch.campaign || '-'} />
         <DetailItem label="Público" value={dispatch.audience || '-'} />
+        <DetailItem label="Base" value={base?.mainBase || 'Sem base'} />
         <DetailItem label="Responsável" value={dispatch.responsible || '-'} />
-        <DetailItem label="Base principal" value={base?.mainBase || 'Sem base'} wide />
-        <DetailItem label="Bases excluídas" value={base?.excludedBases || 'Nenhuma exclusão configurada'} wide />
-        <DetailItem label="Assunto" value={dispatch.subject || '-'} wide />
-        <DetailItem label="Conteúdo do e-mail (corpo)" value={<RichContentPreview html={dispatch.body} />} wide />
-        <DetailItem label="Descrição" value={dispatch.description || '-'} wide />
+        <DetailItem label="Template" value={dispatch.templateName || '-'} />
+        <DetailItem label="Integração" value={dispatch.chip || '-'} />
+      </div>
+
+      <section className="detailSection">
+        <div className="formSectionTitle">Conteúdo</div>
+        <div className="detailContentPreview">
+          {dispatch.channel === 'html_email'
+            ? <HtmlPreviewBlock html={dispatch.htmlContent} />
+            : <RichContentPreview html={content} />}
+        </div>
+      </section>
+
+      {dispatch.description && (
+        <section className="detailSection">
+          <div className="formSectionTitle">Descrição</div>
+          <p className="detailPlainText">{dispatch.description}</p>
+        </section>
+      )}
+
+      <section className="detailSection">
+        <div className="formSectionTitle">Validação</div>
+        <div className="detailValidationSummary">
+          <ValidationBadge validation={validation} />
+          <span>{alerts.length ? 'Confira as pendências reais deste disparo.' : 'Tudo certo'}</span>
+        </div>
+        {alerts.length ? (
+          <div className="detailAlertList">{alerts.map(alert => <span className="overlap" key={alert}>{alert}</span>)}</div>
+        ) : (
+          <span className="statusText pronto-para-disparo">✓ Tudo certo</span>
+        )}
+      </section>
+
+      <div className="detailGrid compact">
+        <DetailItem label="Criado em" value={fmtDate(isoDate(dispatch.createdAt))} />
+        <DetailItem label="Bases excluídas" value={base?.excludedBases || 'Nenhuma exclusão configurada'} />
         {dispatch.attachments.length > 0 && (
           <DetailItem label="Anexos" value={<AttachmentPreview attachments={dispatch.attachments} />} wide />
-        )}
-        {dispatch.channel === 'html_email' && (
-          <DetailItem label="HTML salvo" value={<HtmlPreviewBlock html={dispatch.htmlContent} />} wide />
-        )}
-        <DetailItem label="Alertas" value={validation.issues.length ? validation.issues.join('; ') : 'Sem alertas'} wide />
-        {conflicts.length > 0 && (
-          <DetailItem
-            label="Sobreposição"
-            value={`${conflicts.length} disparo(s) para o mesmo público em data próxima`}
-            wide
-          />
-        )}
-        {duplicateCount > 0 && (
-          <DetailItem
-            label="Nome duplicado"
-            value={`Mesmo nome em ${duplicateCount} outro(s) disparo(s)`}
-            wide
-          />
         )}
       </div>
     </div>
@@ -113,4 +137,3 @@ function AttachmentPreview({ attachments }: { attachments: Dispatch['attachments
     </div>
   );
 }
-

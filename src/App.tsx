@@ -35,6 +35,7 @@ type ThemeMode = 'light' | 'dark';
 
 const LAST_RESPONSIBLE_STORAGE_KEY = 'unigran-last-responsible-by-channel';
 const THEME_COOKIE_KEY = 'planner-theme';
+const DISPATCH_TABS: DispatchChannel[] = ['email', 'whatsapp', 'html_email'];
 
 function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof defaultFilters>> {
   return {
@@ -91,6 +92,7 @@ export default function App() {
   const [filtersByChannel, setFiltersByChannel] = useState(defaultFiltersByChannel);
   const [baseQuery, setBaseQuery] = useState('');
   const [baseSort, setBaseSort] = useState<BaseSort>('name');
+  const [activeCatalog, setActiveCatalog] = useState<CatalogKey>('campaigns');
   const activeChannel: DispatchChannel = tab === 'whatsapp' ? 'whatsapp' : tab === 'html_email' ? 'html_email' : 'email';
   const filters = filtersByChannel[activeChannel];
   const deferredFiltersQ = useDeferredValue(filters.q);
@@ -522,6 +524,19 @@ export default function App() {
 
   function navigate(nextTab: Tab) {
     if (nextTab === tab) return;
+    const lockedDispatchChannel = modal === 'dispatchDetails'
+      ? viewingDispatch?.channel || 'email'
+      : modal === 'dispatch' && editingDispatchMode === 'edit'
+        ? editingDispatch.channel || 'email'
+        : null;
+    if (
+      lockedDispatchChannel
+      && DISPATCH_TABS.includes(nextTab as DispatchChannel)
+      && nextTab !== lockedDispatchChannel
+    ) {
+      setError(`Não é possível trocar para ${channelName(nextTab as DispatchChannel)} enquanto este disparo de ${channelName(lockedDispatchChannel)} está aberto.`);
+      return;
+    }
     requestDiscardOrRun(() => navigateCore(nextTab));
   }
 
@@ -1155,11 +1170,18 @@ export default function App() {
               <h2>Calendário de disparos</h2>
               <p>E-mail, WhatsApp e HTML no mesmo mês</p>
             </div>
-            <div className="calendarActions">
-              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>Mês anterior</button>
-              <strong>{monthLabel(calendarMonth)}</strong>
-              <button className="btn ghost small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
-              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo mês</button>
+            <div className="calendarActions calendarToolbar">
+              <div className="calendarNavGroup">
+                <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>‹ Mês anterior</button>
+                <strong>{monthLabel(calendarMonth)}</strong>
+                <button className="btn ghost small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
+                <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo mês ›</button>
+              </div>
+              <div className="calendarLegend" aria-label="Legenda das modalidades">
+                <span><i className="email" />E-mail</span>
+                <span><i className="whatsapp" />WhatsApp</span>
+                <span><i className="html_email" />E-mail HTML</span>
+              </div>
             </div>
           </div>
           <CalendarView
@@ -1173,7 +1195,7 @@ export default function App() {
       )}
 
       {tab === 'bases' && (
-        <section className="panel">
+        <section className="panel baseRulesPanel">
           <div className="panelHead">
             <div>
               <h2>Regras de bases</h2>
@@ -1202,12 +1224,17 @@ export default function App() {
       )}
 
       {tab === 'catalogs' && (
-        <section className="panel">
+        <section className={`panel catalogPanel activeCatalog-${activeCatalog}`}>
           <div className="panelHead">
             <div>
               <h2>Cadastros</h2>
               <p>Listas usadas nos selects de novo disparo e regras de bases</p>
             </div>
+          </div>
+          <div className="catalogTabs" role="tablist" aria-label="Tipos de cadastro">
+            <button type="button" role="tab" aria-selected={activeCatalog === 'campaigns'} className={activeCatalog === 'campaigns' ? 'active' : ''} onClick={() => setActiveCatalog('campaigns')}>Campanhas</button>
+            <button type="button" role="tab" aria-selected={activeCatalog === 'audiences'} className={activeCatalog === 'audiences' ? 'active' : ''} onClick={() => setActiveCatalog('audiences')}>Públicos</button>
+            <button type="button" role="tab" aria-selected={activeCatalog === 'responsibles'} className={activeCatalog === 'responsibles' ? 'active' : ''} onClick={() => setActiveCatalog('responsibles')}>Responsáveis</button>
           </div>
           <div className="catalogGrid">
             <CatalogManager
@@ -1228,6 +1255,15 @@ export default function App() {
               onUpdate={(oldValue, newValue) => updateCatalogItem('audiences', oldValue, newValue)}
               onRemove={values => removeCatalogItems('audiences', values)}
             />
+            <CatalogManager
+              title="Responsáveis"
+              description="Pessoas disponíveis nos formulários."
+              values={responsibles}
+              dates={state.catalogDates?.responsibles || {}}
+              onAdd={value => addCatalogItem('responsibles', value)}
+              onUpdate={(oldValue, newValue) => updateCatalogItem('responsibles', oldValue, newValue)}
+              onRemove={values => removeCatalogItems('responsibles', values)}
+            />
           </div>
         </section>
       )}
@@ -1235,7 +1271,7 @@ export default function App() {
       {modal === 'dispatch' && (
         <div className="modalBackdrop" onMouseDown={requestModalClose}>
           <form className="modal dispatchFormModal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={editingDispatchMode === 'edit' ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={requestModalClose} />
+            <ModalHead eyebrow="PLANEJAMENTO" title={editingDispatchMode === 'edit' ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={requestModalClose} />
             <div className="dispatchFormLayout">
             <div className="dispatchFormContent">
             <div className="channelSelector">
@@ -1243,7 +1279,9 @@ export default function App() {
               <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('whatsapp')}>◉ WhatsApp</button>
               <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('html_email')}>◇ E-mail HTML</button>
             </div>
-            <div className="modalGrid">
+            <section className="formSection">
+              <div className="formSectionTitle">Planejamento</div>
+              <div className="modalGrid dispatchPlanningGrid">
               <Field label="Data de disparo">
                 <BrazilianDatePicker
                   value={editingDispatch.date}
@@ -1313,7 +1351,14 @@ export default function App() {
                 {suggestionHint('responsavel', 'Responsável sugerido pelo último uso nesta modalidade.')}
                 {fieldError('responsavel', 'Informe o responsável antes de marcar como pronto.')}
               </Field>
-              <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>
+              </div>
+            </section>
+            <section className="formSection">
+              <div className="formSectionTitle">Conteúdo · {channelName(editingDispatch.channel || 'email')}</div>
+              <div className="modalGrid dispatchContentGrid">
+              {editingDispatch.channel !== 'whatsapp' && (
+                <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>
+              )}
               {editingDispatch.channel !== 'html_email' && (
                 <Field label={editingDispatch.channel === 'whatsapp' ? 'Mensagem' : 'Conteúdo do e-mail (corpo)'} wide asGroup>
                   <RichTextEditor
@@ -1343,7 +1388,8 @@ export default function App() {
                   {fieldError('conteudo HTML', 'Informe o conteúdo HTML antes de marcar como pronto.')}
                 </Field>
               )}
-            </div>
+              </div>
+            </section>
             </div>
             <aside className="readinessPanel">
               <div className="readinessTop"><span>Prontidão</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
@@ -1355,7 +1401,7 @@ export default function App() {
               <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatchStatus('Pronto para disparo')}>✓ Marcar como pronto</button>
             </aside>
             </div>
-            <ModalFoot saving={saving} onClose={requestModalClose} />
+            <ModalFoot saving={saving} onClose={requestModalClose} submitLabel={editingDispatchMode === 'edit' ? 'Salvar alterações' : 'Criar disparo'} />
           </form>
         </div>
       )}
@@ -1363,7 +1409,7 @@ export default function App() {
       {modal === 'dispatchDetails' && viewingDispatch && (
         <div className="modalBackdrop" onMouseDown={closeModal}>
           <div className="modal detailsModal" onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={`Detalhes do disparo de ${channelName(viewingDispatch.channel || 'email')}`} onClose={closeModal} />
+            <ModalHead eyebrow={channelName(viewingDispatch.channel || 'email').toUpperCase()} title={dispatchDisplayName(viewingDispatch) || 'Detalhes do disparo'} onClose={closeModal} />
             <DispatchDetails
               dispatch={viewingDispatch}
               base={baseById.get(viewingDispatch.baseId)}
@@ -1413,9 +1459,9 @@ export default function App() {
 
       {modal === 'base' && (
         <div className="modalBackdrop" onMouseDown={closeModal}>
-          <form className="modal" onSubmit={submitBase} onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={editingBase.id ? 'Editar regra de base' : 'Nova regra de base'} onClose={closeModal} />
-            <div className="modalGrid">
+          <form className="modal baseRuleFormModal" onSubmit={submitBase} onMouseDown={event => event.stopPropagation()}>
+            <ModalHead eyebrow="REGRAS DE BASE" title={editingBase.id ? 'Editar regra de base' : 'Nova regra de base'} onClose={closeModal} />
+            <div className="modalGrid baseRuleFormGrid">
               <Field label="Campanha">
                 <SelectWithCreate
                   value={editingBase.campaign}
@@ -1448,7 +1494,7 @@ export default function App() {
                   />
                 )}
               </Field>
-              <Field label="Base principal" wide><input required value={editingBase.mainBase} onChange={event => setEditingBase({ ...editingBase, mainBase: event.target.value })} /></Field>
+              <Field label="Base principal"><input required value={editingBase.mainBase} onChange={event => setEditingBase({ ...editingBase, mainBase: event.target.value })} /></Field>
               <Field label="Bases excluídas" wide><textarea rows={2} value={editingBase.excludedBases} onChange={event => setEditingBase({ ...editingBase, excludedBases: event.target.value })} /></Field>
               <Field label="Ação esperada" wide><input required value={editingBase.expectedAction} onChange={event => setEditingBase({ ...editingBase, expectedAction: event.target.value })} /></Field>
               <Field label="Última atualização"><input type="date" value={editingBase.lastUpdated} onChange={event => setEditingBase({ ...editingBase, lastUpdated: event.target.value })} /></Field>
@@ -1461,7 +1507,7 @@ export default function App() {
               </Field>
               <Field label="Notas" wide><textarea rows={2} value={editingBase.notes} onChange={event => setEditingBase({ ...editingBase, notes: event.target.value })} /></Field>
             </div>
-            <ModalFoot saving={saving} onClose={closeModal} />
+            <ModalFoot saving={saving} onClose={closeModal} submitLabel="Salvar regra" />
           </form>
         </div>
       )}

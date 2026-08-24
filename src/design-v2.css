@@ -54,10 +54,10 @@
   --primary-hover: #4f7fe9;
   --green: #55c995;
   --green-soft: rgba(22, 132, 85, 0.15);
-  --amber: #e3b45b;
-  --amber-soft: rgba(170, 107, 0, 0.16);
-  --red: #ef7d88;
-  --red-soft: rgba(195, 60, 73, 0.16);
+  --amber: #c4d7ff;
+  --amber-soft: rgba(61, 111, 229, 0.24);
+  --red: #ff9bad;
+  --red-soft: rgba(255, 84, 118, 0.18);
   --violet: #ba91ec;
   --violet-soft: rgba(140, 91, 203, 0.18);
   --whatsapp: #66d49e;
@@ -1036,12 +1036,12 @@ body {
 }
 
 .dispatchFormModal {
-  width: min(1120px, calc(100% - 28px));
+  width: min(1320px, calc(100% - 32px));
 }
 
 .dispatchFormLayout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px;
 }
 
 .dispatchFormContent {
@@ -1414,6 +1414,7 @@ th {
 .field input,
 .field select,
 .field textarea,
+.contentEditor,
 .filterBoard input,
 .filterBoard select,
 .filterToolbar input,
@@ -1453,6 +1454,7 @@ th {
 .field input:focus,
 .field select:focus,
 .field textarea:focus,
+.contentEditor:focus,
 .filterBoard input:focus,
 .filterBoard select:focus,
 .filterToolbar input:focus,
@@ -1893,11 +1895,29 @@ td,
 [data-theme="dark"] .statusSelect,
 [data-theme="dark"] .modal input,
 [data-theme="dark"] .modal select,
-[data-theme="dark"] .modal textarea {
+[data-theme="dark"] .modal textarea,
+[data-theme="dark"] .contentEditor {
   background: #111a29;
   border-color: #2a394d;
   color: #f1f5f9;
   color-scheme: dark;
+}
+
+[data-theme="dark"] .contentEditor:empty::before {
+  color: #8f9daf;
+}
+
+[data-theme="dark"] .contentEditor th,
+[data-theme="dark"] .richContentPreview th {
+  background: #1b2738;
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .contentEditor td,
+[data-theme="dark"] .contentEditor th,
+[data-theme="dark"] .richContentPreview td,
+[data-theme="dark"] .richContentPreview th {
+  border-color: #2a394d;
 }
 
 [data-theme="dark"] .statusSelect option,
@@ -1930,9 +1950,9 @@ td,
 }
 
 [data-theme="dark"] .statusSelect.pausado {
-  background: rgba(170, 107, 0, 0.16);
-  border-color: rgba(170, 107, 0, 0.32);
-  color: #e3b45b;
+  background: var(--amber-soft);
+  border-color: rgba(61, 111, 229, 0.34);
+  color: var(--amber);
 }
 
 [data-theme="dark"] .statusSelect.cancelado,
@@ -1988,9 +2008,80 @@ td,
 [data-theme="dark"] .calendarMore,
 [data-theme="dark"] .overlap,
 [data-theme="dark"] .duplicateName {
-  background: rgba(170, 107, 0, 0.16);
-  color: #e3b45b;
-  border-color: rgba(170, 107, 0, 0.32);
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-color: rgba(61, 111, 229, 0.34);
+}
+
+[data-theme="dark"] .metric.warning::before {
+  background: var(--amber);
+}
+
+[data-theme="dark"] .overviewMetrics i.amber,
+[data-theme="dark"] .overviewIssue.yellow > i,
+[data-theme="dark"] .readinessPanel li.pending > span,
+[data-theme="dark"] .readinessAlert {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-color: rgba(61, 111, 229, 0.34);
+}
+
+[data-theme="dark"] .readinessAlert strong,
+[data-theme="dark"] .readinessAlert p {
+  color: var(--amber);
+}
+
+[data-theme="dark"] .confirmDialogContent h2,
+[data-theme="dark"] .calendarDeleteContent h2 {
+  color: var(--text);
+}
+
+[data-theme="dark"] .confirmDialogIcon {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border: 1px solid rgba(91, 134, 247, 0.42);
+}
+
+[data-theme="dark"] .calendarDeleteIcon,
+[data-theme="dark"] .calendarDeleteEyebrow,
+[data-theme="dark"] .authError,
+[data-theme="dark"] .feedback.error,
+[data-theme="dark"] .validation.red,
+[data-theme="dark"] .statusSelect.cancelado,
+[data-theme="dark"] .statusText.cancelado,
+[data-theme="dark"] .actions .danger,
+[data-theme="dark"] .attachmentItem .danger,
+[data-theme="dark"] .btn.dangerSoft {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: rgba(255, 116, 141, 0.34);
+}
+
+[data-theme="dark"] .btn.dangerStrong,
+[data-theme="dark"] .calendarDeleteButton {
+  background: #a9344c;
+  color: #fff;
+  border-color: #c94a62;
+  box-shadow: 0 10px 24px rgba(255, 84, 118, 0.18);
+}
+
+[data-theme="dark"] .btn.dangerStrong:hover:not(:disabled),
+[data-theme="dark"] .calendarDeleteButton:hover:not(:disabled) {
+  background: #c9435d;
+  color: #fff;
+  box-shadow: 0 13px 28px rgba(255, 84, 118, 0.26);
+}
+
+[data-theme="dark"] .actions .danger:hover:not(:disabled),
+[data-theme="dark"] .attachmentItem .danger:hover:not(:disabled),
+[data-theme="dark"] .btn.dangerSoft:hover:not(:disabled),
+[data-theme="dark"] .rowActionMenuPanel .danger:hover {
+  background: rgba(255, 84, 118, 0.25);
+  color: #ffc0ca;
+}
+
+[data-theme="dark"] .rowActionMenuPanel .danger {
+  border-top-color: rgba(255, 116, 141, 0.26);
 }
 
 [data-theme="light"] {
@@ -2269,6 +2360,7 @@ td,
 [data-theme="light"] .modal input,
 [data-theme="light"] .modal select,
 [data-theme="light"] .modal textarea,
+[data-theme="light"] .contentEditor,
 [data-theme="light"] .statusSelect {
   background: #fff;
   border-color: #dfe4ec;
@@ -2520,4 +2612,337 @@ td,
 [data-theme="light"] .calendarEmptyCreate {
   border-color: #cbd5e4;
   color: #8190a7;
+}
+
+/* Ajustes aprovados do protótipo: somente formulários, calendário, bases e cadastros */
+.modalHead > div {
+  min-width: 0;
+}
+
+.modalHead small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.overviewHeroActions .btn:first-child,
+.overviewHeroSecondary {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.overviewHeroActions .btn:first-child:hover,
+.overviewHeroSecondary:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.overviewHeroActions .btn:last-child,
+.overviewHeroPrimary {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: #fff;
+  color: var(--primary);
+}
+
+.overviewHeroActions .btn:last-child:hover,
+.overviewHeroPrimary:hover {
+  background: #f3f7ff;
+  color: var(--primary-hover);
+}
+
+.formSection,
+.detailSection {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.formSection + .formSection,
+.detailSection + .detailSection,
+.detailGrid + .detailSection,
+.detailSection + .detailGrid {
+  margin-top: 14px;
+}
+
+.formSectionTitle {
+  margin-bottom: 14px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.dispatchPlanningGrid {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+}
+
+.dispatchContentGrid {
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.dispatchFormModal .modalHead,
+.dispatchFormModal .modalFoot,
+.baseRuleFormModal .modalHead,
+.baseRuleFormModal .modalFoot {
+  position: sticky;
+  z-index: 4;
+}
+
+.dispatchFormModal .modalHead,
+.baseRuleFormModal .modalHead {
+  top: 0;
+}
+
+.dispatchFormModal .modalFoot,
+.baseRuleFormModal .modalFoot {
+  bottom: 0;
+}
+
+.readinessPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calendarToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.calendarNavGroup,
+.calendarLegend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.calendarLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.calendarLegend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.calendarLegend i.email { background: var(--primary); }
+.calendarLegend i.whatsapp { background: var(--whatsapp); }
+.calendarLegend i.html_email { background: var(--html); }
+
+.detailBadges,
+.detailValidationSummary,
+.detailAlertList {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.detailMainGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detailSection {
+  background: var(--surface-2);
+}
+
+.detailContentPreview,
+.detailPlainText {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.detailPlainText {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.detailGrid.compact {
+  margin-top: 14px;
+}
+
+.baseRulesPanel .panelHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.baseRuleGrid {
+  display: grid;
+  gap: 14px;
+}
+
+.baseRuleCard {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  transition: transform 0.18s var(--ease), border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+
+.baseRuleCard:hover {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--line));
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+.baseRuleCard header,
+.baseRuleCard footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.baseRuleCard h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.baseRuleCard header p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.baseRuleDetails {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.baseRuleInfo {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.baseRuleInfo span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.baseRuleInfo strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.baseRuleNotes {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.baseRuleCard footer {
+  margin-top: 16px;
+  align-items: center;
+}
+
+.baseRuleFormModal {
+  width: min(780px, calc(100% - 28px));
+}
+
+.baseRuleFormGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.baseRuleFormGrid .field.wide {
+  grid-column: auto;
+}
+
+.baseRuleFormGrid .field:nth-last-child(-n+2) {
+  grid-column: 1 / -1;
+}
+
+.catalogTabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 16px;
+  overflow-x: auto;
+}
+
+.catalogTabs button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.catalogTabs button.active {
+  border-color: color-mix(in srgb, var(--primary) 36%, var(--line));
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+}
+
+.catalogPanel .catalogGrid {
+  grid-template-columns: 1fr;
+}
+
+.catalogPanel.activeCatalog-campaigns .catalogGrid > .catalogCard:nth-child(n+2),
+.catalogPanel.activeCatalog-audiences .catalogGrid > .catalogCard:nth-child(1),
+.catalogPanel.activeCatalog-audiences .catalogGrid > .catalogCard:nth-child(3),
+.catalogPanel.activeCatalog-responsibles .catalogGrid > .catalogCard:nth-child(-n+2) {
+  display: none;
+}
+
+.catalogHead > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-2));
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .dispatchPlanningGrid,
+  .dispatchContentGrid,
+  .baseRuleFormGrid,
+  .baseRuleDetails,
+  .detailMainGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .calendarToolbar,
+  .baseRulesPanel .panelHead,
+  .baseRuleCard header,
+  .baseRuleCard footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
