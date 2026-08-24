@@ -31,8 +31,10 @@ type FeedbackType = 'success' | 'warning' | 'error' | 'info';
 type Feedback = { type: FeedbackType; message: string };
 type PendingDiscardAction = { run: () => void };
 type DispatchFormMode = 'create' | 'edit';
+type ThemeMode = 'light' | 'dark';
 
 const LAST_RESPONSIBLE_STORAGE_KEY = 'unigran-last-responsible-by-channel';
+const THEME_COOKIE_KEY = 'planner-theme';
 
 function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof defaultFilters>> {
   return {
@@ -40,6 +42,15 @@ function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof de
     whatsapp: defaultFilters(),
     html_email: defaultFilters()
   };
+}
+
+function writeThemeCookie(theme: ThemeMode) {
+  const maxAge = 60 * 60 * 24 * 365;
+  try {
+    document.cookie = `${THEME_COOKIE_KEY}=${encodeURIComponent(theme)}; Max-Age=${maxAge}; Path=/; SameSite=Lax`;
+  } catch {
+    // Mantém o tema aplicado na sessão atual mesmo se o navegador bloquear cookies.
+  }
 }
 
 export default function App() {
@@ -70,6 +81,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof document === 'undefined') return 'light';
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  });
   const [dispatchFieldErrors, setDispatchFieldErrors] = useState<string[]>([]);
   const [pendingDiscardAction, setPendingDiscardAction] = useState<PendingDiscardAction | null>(null);
   const [suggestedFields, setSuggestedFields] = useState<string[]>([]);
@@ -88,6 +103,17 @@ export default function App() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    writeThemeCookie(theme);
+    try {
+      window.localStorage.removeItem(THEME_COOKIE_KEY);
+    } catch {
+      // Preferência antiga em localStorage é apenas compatibilidade; cookie é a fonte atual.
+    }
+  }, [theme]);
 
   useEffect(() => {
     if (!feedback || feedback.type !== 'success') return;
@@ -139,6 +165,10 @@ export default function App() {
 
   function clearFeedback() {
     setFeedback(null);
+  }
+
+  function toggleTheme() {
+    setTheme(current => current === 'dark' ? 'light' : 'dark');
   }
 
   function readLastResponsible(channel: DispatchChannel) {
@@ -953,6 +983,19 @@ export default function App() {
               •••
             </summary>
             <div className="headerMenuPanel">
+              <div className="themeMenuRow">
+                <span>{theme === 'dark' ? '🌙 Escuro' : '☀ Claro'}</span>
+                <button
+                  type="button"
+                  className={`themeSwitch ${theme === 'dark' ? 'active' : ''}`}
+                  role="switch"
+                  aria-checked={theme === 'dark'}
+                  aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+                  onClick={toggleTheme}
+                >
+                  <span />
+                </button>
+              </div>
               <button type="button" className="menuRefresh" onClick={() => {
                 setHeaderMenuOpen(false);
                 requestDiscardOrRun(() => {

@@ -162,24 +162,33 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                       onChange={event => toggleSelected(dispatch.id, event.target.checked)}
                     />
                   </td>
-                  <td className="date">{fmtDate(dispatch.date)}</td>
-                  <td>{dispatchTime(dispatch.time)}</td>
-                  <td className="dispatchNameCell">
+                  <td><span className="date">{fmtDate(dispatch.date)}</span></td>
+                  <td><span className="dispatchCellText">{dispatchTime(dispatch.time)}</span></td>
+                  <td>
+                    <div className="dispatchNameCell">
                     <strong>{displayName || 'Sem nome'}</strong>
                     <span className="pill">{dispatch.campaign || 'Sem campanha'}</span>
                     <small>{dispatch.responsible || 'Sem responsável'}</small>
+                    </div>
                   </td>
-                  <td>{dispatch.audience || '-'}</td>
-                  <td onClick={event => event.stopPropagation()}><StatusSelect value={dispatch.status} onChange={value => onStatus(dispatch.id, value)} /></td>
+                  <td><span className="dispatchCellText">{dispatch.audience || '-'}</span></td>
+                  <td onClick={event => event.stopPropagation()}>
+                    <div className="dispatchStatusCell">
+                      <StatusSelect value={dispatch.status} onChange={value => onStatus(dispatch.id, value)} />
+                    </div>
+                  </td>
                   <td>
-                    <ValidationBadge validation={validation} />
+                    <div className="dispatchValidationCell">
+                      <ValidationBadge validation={validation} />
                     {conflicts.length > 0 && <small className="overlap">Sobreposição com {conflicts.length} disparo(s)</small>}
-                    {duplicateCount > 0 && <small className="duplicateName">Mesmo nome em {duplicateCount} disparo(s)</small>}
+                      {duplicateCount > 0 && <small className="duplicateName">Mesmo nome em {duplicateCount} disparo(s)</small>}
+                    </div>
                   </td>
-                  <td className="actions" onClick={event => event.stopPropagation()}>
-                    <button onClick={() => onEdit(dispatch)}>Editar</button>
-                    <button onClick={() => onDuplicate(dispatch)}>Duplicar</button>
-                    <div className="rowActionMenu">
+                  <td onClick={event => event.stopPropagation()}>
+                    <div className="actions dispatchActionsCell">
+                      <button onClick={() => onEdit(dispatch)}>Editar</button>
+                      <button onClick={() => onDuplicate(dispatch)}>Duplicar</button>
+                      <div className="rowActionMenu">
                       <button
                         type="button"
                         className="rowActionMenuButton"
@@ -221,6 +230,7 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                           }}>Excluir</button>
                         </div>
                       )}
+                      </div>
                     </div>
                   </td>
                 </tr>
