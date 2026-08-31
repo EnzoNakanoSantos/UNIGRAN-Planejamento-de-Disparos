@@ -3,10 +3,11 @@ import type { Dispatch, FileAttachment } from '../../types';
 import { fileToAttachment, formatBytes, isExcelFile } from '../../utils/app';
 import { MAX_ATTACHMENT_SIZE } from '../../config/dispatch';
 
-export function AttachmentPicker({ attachments, onAdd, onRemove }: {
+export function AttachmentPicker({ attachments, onAdd, onRemove, label }: {
   attachments: Dispatch['attachments'];
   onAdd: (attachments: Dispatch['attachments']) => void;
   onRemove: (id: string) => void;
+  label?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -17,12 +18,15 @@ export function AttachmentPicker({ attachments, onAdd, onRemove }: {
     setMessage('');
     try {
       const allFiles = [...files];
-      const invalidSize = allFiles.filter(file => file.size > MAX_ATTACHMENT_SIZE);
-      const images = allFiles.filter(file => ['image/png', 'image/jpeg'].includes(file.type) && file.size <= MAX_ATTACHMENT_SIZE);
-      if (invalidSize.length) {
-        setMessage(`${invalidSize.length} imagem(ns) acima de 20 MB não foram anexadas.`);
-      }
-      onAdd(await Promise.all(images.map(fileToAttachment)));
+      const invalidType = allFiles.filter(file => !/\.html$/i.test(file.name));
+      const htmlCandidates = allFiles.filter(file => /\.html$/i.test(file.name));
+      const invalidSize = htmlCandidates.filter(file => file.size > MAX_ATTACHMENT_SIZE);
+      const htmlFiles = htmlCandidates.filter(file => file.size <= MAX_ATTACHMENT_SIZE);
+      const messages: string[] = [];
+      if (invalidType.length) messages.push(`${invalidType.length} arquivo(s) ignorado(s): anexe apenas .html.`);
+      if (invalidSize.length) messages.push(`${invalidSize.length} arquivo(s) acima de 20 MB não foram anexados.`);
+      setMessage(messages.join(' '));
+      if (htmlFiles.length) onAdd(await Promise.all(htmlFiles.map(fileToAttachment)));
     } finally {
       setBusy(false);
     }
@@ -33,21 +37,21 @@ export function AttachmentPicker({ attachments, onAdd, onRemove }: {
       <label className="attachmentInput">
         <input
           type="file"
-          accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+          accept=".html,text/html"
           multiple
           onChange={event => {
             handleFiles(event.target.files);
             event.currentTarget.value = '';
           }}
         />
-        <span>{busy ? 'Carregando imagens...' : 'Anexar PNG/JPG/JPEG até 20 MB'}</span>
+        <span>{busy ? 'Carregando arquivos HTML...' : label || 'Anexar arquivo(s) .HTML até 20 MB'}</span>
       </label>
       {message && <small className="attachmentMessage">{message}</small>}
       {attachments.length > 0 && (
         <div className="attachmentGrid">
           {attachments.map(attachment => (
             <div className="attachmentItem" key={attachment.id}>
-              <img src={attachment.dataUrl} alt={attachment.name} />
+              <div className="fileIcon">HTML</div>
               <div>
                 <strong>{attachment.name}</strong>
                 <small>{formatBytes(attachment.size)}</small>
@@ -123,4 +127,3 @@ export function SpreadsheetAttachmentPicker({ attachment, onChange, onRemove }: 
     </div>
   );
 }
-

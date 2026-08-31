@@ -6325,3 +6325,134 @@ body,
     width: 168px;
   }
 }
+
+/* Ajustes 3.2 — consistência do formulário, avisos e confirmação de exclusão */
+.dispatchFormModal .dispatchPlanningGrid input:not(.nativeDatePicker),
+.dispatchFormModal .dispatchPlanningGrid select {
+  font-size: 13px;
+}
+
+[data-theme="dark"] .validation.yellow,
+[data-theme="dark"] .channelQuickStats .pending {
+  background: #362c20 !important;
+  border-color: #64481a !important;
+  color: #f1b63b !important;
+}
+
+[data-theme="dark"] .channelQuickStats .pending strong {
+  color: inherit !important;
+}
+
+[data-theme="dark"] .dispatchConfirm {
+  padding: 12px 14px;
+  border: 1px solid #9f1239;
+  border-radius: 12px;
+  background: rgba(76, 5, 25, 0.58);
+  color: #fda4af;
+}
+
+[data-theme="dark"] .dispatchConfirm > strong,
+[data-theme="dark"] .dispatchConfirm > span {
+  color: #fda4af;
+}
+
+/* Ajustes 3.2 — títulos longos, calendário, conteúdo copiável e prontidão */
+.modalHead > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modalHead h2 {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modalHead > button {
+  flex: 0 0 auto;
+}
+
+.detailsModal .modalHead {
+  position: static;
+}
+
+.calendarEvent,
+.calendarEvent strong,
+.dayDispatchInfo,
+.dayDispatchInfo h3,
+.dispatchNameCell,
+.dispatchNameCell > strong {
+  min-width: 0;
+}
+
+.calendarEvent strong,
+.dayDispatchInfo h3,
+.dispatchNameCell > strong,
+.detailHero h3 {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailHero > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.calendarEvent strong {
+  font-size: 10px;
+}
+
+.calendarDay.outside .calendarEmptyCreate {
+  display: block;
+}
+
+.detailSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.detailSectionHeader .formSectionTitle {
+  margin-bottom: 0;
+}
+
+.contentCopyButton {
+  flex: 0 0 auto;
+}
+
+[data-theme="dark"] .readinessAlert,
+[data-theme="dark"] .readinessPanel li.pending > span {
+  background: #362c20 !important;
+  border-color: #64481a !important;
+  color: #f1b63b !important;
+}
+
+[data-theme="dark"] .readinessPanel li.pending > span {
+  border: 1px solid #64481a !important;
+}
+
+[data-theme="dark"] .readinessAlert strong,
+[data-theme="dark"] .readinessAlert p {
+  color: #f1b63b !important;
+}
+
+@media (max-width: 760px) {
+  .calendarDay.outside:not(:has(.calendarEvent)) {
+    display: block;
+  }
+}
+
+/* Aviso específico: Base principal não informada */
+.detailAlertList .baseMissingAlert {
+  background: #362c20 !important;
+  border-color: #64481a !important;
+  color: #f1b63b !important;
+}
+

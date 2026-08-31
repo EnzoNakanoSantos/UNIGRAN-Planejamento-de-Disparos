@@ -150,6 +150,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
+  const [baseDeleteTarget, setBaseDeleteTarget] = useState<BaseRule | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof document === 'undefined') return 'light';
@@ -206,13 +207,15 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!feedback || feedback.type !== 'success') return;
-    const timeout = window.setTimeout(() => setFeedback(null), 3200);
+    if (!feedback) return;
+    const dismissAfter = feedback.type === 'error' ? 5000 : feedback.type === 'success' ? 3200 : 0;
+    if (!dismissAfter) return;
+    const timeout = window.setTimeout(() => setFeedback(null), dismissAfter);
     return () => window.clearTimeout(timeout);
   }, [feedback]);
 
   useEffect(() => {
-    if (!modal && !calendarDeleteTarget && !pendingDiscardAction) return;
+    if (!modal && !calendarDeleteTarget && !baseDeleteTarget && !pendingDiscardAction) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (pendingDiscardAction) {
@@ -223,11 +226,15 @@ export default function App() {
         setCalendarDeleteTarget(null);
         return;
       }
+      if (baseDeleteTarget) {
+        setBaseDeleteTarget(null);
+        return;
+      }
       requestModalClose();
     }
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [modal, calendarDeleteTarget, pendingDiscardAction, editingDispatch]);
+  }, [modal, calendarDeleteTarget, baseDeleteTarget, pendingDiscardAction, editingDispatch]);
 
   const isDispatchDirty = modal === 'dispatch' && hasUnsavedDispatchChanges(editingDispatch, initialDispatchSnapshotRef.current);
 
@@ -940,6 +947,7 @@ export default function App() {
   }
 
   function setEditingDispatchStatus(status: DispatchStatus) {
+    clearFeedback();
     if (shouldValidateReadiness(status)) {
       const responsible = sessionResponsible || editingDispatch.responsible.trim();
       const missing = missingReadyDispatchFields({ ...editingDispatch, responsible, status });
@@ -950,7 +958,6 @@ export default function App() {
       }
     }
     setDispatchFieldErrors([]);
-    setError('');
     setEditingDispatch({ ...editingDispatch, status });
   }
 
@@ -972,13 +979,20 @@ export default function App() {
     await persist({ ...state, dispatches: state.dispatches.filter(item => !selected.has(item.id)) });
   }
 
+  function requestDeleteBase(id: string) {
+    const target = state.bases.find(item => item.id === id);
+    if (target) setBaseDeleteTarget(target);
+  }
+
   async function deleteBase(id: string) {
-    if (!confirm('Excluir esta regra de base? Os disparos vinculados ficarão sem base.')) return;
-    await persist({
+    const saved = await persist({
       ...state,
       bases: state.bases.filter(item => item.id !== id),
       dispatches: state.dispatches.map(item => item.baseId === id ? { ...item, baseId: '' } : item)
     });
+    if (!saved) return;
+    setBaseDeleteTarget(null);
+    setSavedMessage('Regra de base removida.');
   }
 
   async function addCatalogItem(key: CatalogKey, value: string) {
@@ -1445,7 +1459,7 @@ export default function App() {
               <option value="date-asc">Data mais antiga</option>
             </select>
           </div>
-          <BaseTable bases={filteredBases} onEdit={openBase} onDelete={deleteBase} />
+          <BaseTable bases={filteredBases} onEdit={openBase} onDelete={requestDeleteBase} />
         </section>
       )}
 
@@ -1596,9 +1610,10 @@ export default function App() {
                 </Field>
               )}
               <Field label="Descrição" wide><textarea rows={3} value={editingDispatch.description} onChange={event => setEditingDispatch({ ...editingDispatch, description: event.target.value })} /></Field>
-              <Field label="Anexos de imagem" wide asGroup>
+              <Field label="Arquivos HTML" wide asGroup>
                 <AttachmentPicker
                   attachments={editingDispatch.attachments}
+                  label={editingDispatch.channel === 'email' || editingDispatch.channel === 'whatsapp' ? 'Anexar topo/imagem (até 20 MB)' : undefined}
                   onAdd={attachments => setEditingDispatch(current => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
                   onRemove={id => setEditingDispatch(current => ({ ...current, attachments: current.attachments.filter(item => item.id !== id) }))}
                 />
@@ -1783,6 +1798,16 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {baseDeleteTarget && (
+        <ConfirmDialog
+          title="Excluir regra de base?"
+          text={`A regra ${baseDeleteTarget.campaign || baseDeleteTarget.mainBase || 'selecionada'} será removida. Os disparos vinculados ficarão sem base.`}
+          safeLabel="Cancelar"
+          confirmLabel="Confirmar exclusão"
+          onSafe={() => setBaseDeleteTarget(null)}
+          onConfirm={() => deleteBase(baseDeleteTarget.id)}
+        />
       )}
       {pendingDiscardAction && (
         <ConfirmDialog

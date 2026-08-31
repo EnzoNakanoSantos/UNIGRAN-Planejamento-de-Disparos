@@ -54,10 +54,6 @@ export function dispatchValidation(dispatch: Dispatch, bases: BaseRule[]): Valid
   if (shouldValidateReadiness(dispatch.status)) {
     issues.push(...missingReadyDispatchFields(dispatch).map(field => `Prontidao pendente: ${field}`));
   }
-  if (base?.lastUpdated && dispatch.date) {
-    const gap = dateDiff(dispatch.date, base.lastUpdated);
-    if (gap > 7) issues.push(`Base atualizada ${gap} dias antes do disparo`);
-  }
   if (!issues.length) return { level: 'green', issues: [] };
   const red = issues.some(issue => /principal|exclusão não|Prontidao pendente/.test(issue));
   return { level: red ? 'red' : 'yellow', issues: [...new Set(issues)] };

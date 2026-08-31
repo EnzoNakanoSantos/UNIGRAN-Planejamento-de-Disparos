@@ -11,7 +11,7 @@ export function ModalHead({ title, eyebrow, onClose }: { title: string; eyebrow?
     <div className="modalHead">
       <div>
         {eyebrow && <small>{eyebrow}</small>}
-        <h2>{title}</h2>
+        <h2 title={title}>{title}</h2>
       </div>
       <button type="button" onClick={onClose}>Fechar</button>
     </div>
