@@ -1,6 +1,27 @@
 import type { FormEvent } from 'react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { getCurrentUser, loadState, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
+import {
+  Calendar,
+  ChevronRight,
+  Code2,
+  Database,
+  ExternalLink,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  Mail,
+  Menu,
+  MessageSquare,
+  Moon,
+  MoreHorizontal,
+  Plus,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  type LucideIcon
+} from 'lucide-react';
+import { getCurrentUser, loadState, refreshAuthSession, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
 import { addDaysISO, baseValidation, dispatchValidation, fmtDate, isBaseStale, overlapMap, todayISO, uid } from './logic';
 import { AUTH_STORAGE_KEY, CHIP_OPTIONS, DISPATCH_FORM_STATUS, EXCEL_TYPES, MAX_ATTACHMENT_SIZE, RESPONSIBLE_BY_EMAIL } from './config/dispatch';
 import { emptyBase, emptyDispatch, defaultFilters } from './utils/factories';
@@ -34,8 +55,56 @@ type DispatchFormMode = 'create' | 'edit';
 type ThemeMode = 'light' | 'dark';
 
 const LAST_RESPONSIBLE_STORAGE_KEY = 'unigran-last-responsible-by-channel';
+const AUTH_REFRESH_STORAGE_KEY = `${AUTH_STORAGE_KEY}-refresh`;
+const AUTH_EXPIRES_STORAGE_KEY = `${AUTH_STORAGE_KEY}-expires-at`;
+const AUTH_REFRESH_MARGIN_MS = 60_000;
 const THEME_COOKIE_KEY = 'planner-theme';
 const DISPATCH_TABS: DispatchChannel[] = ['email', 'whatsapp', 'html_email'];
+
+type IconName =
+  | 'dashboard'
+  | 'mail'
+  | 'message'
+  | 'code'
+  | 'calendar'
+  | 'database'
+  | 'folder'
+  | 'sparkles'
+  | 'chevron'
+  | 'shield'
+  | 'menu'
+  | 'plus'
+  | 'more'
+  | 'refresh'
+  | 'sun'
+  | 'moon'
+  | 'external'
+  | 'logout';
+
+function RefIcon({ name }: { name: IconName }) {
+  const icons: Record<IconName, LucideIcon> = {
+    dashboard: LayoutDashboard,
+    mail: Mail,
+    message: MessageSquare,
+    code: Code2,
+    calendar: Calendar,
+    database: Database,
+    folder: FolderKanban,
+    sparkles: Sparkles,
+    chevron: ChevronRight,
+    shield: ShieldCheck,
+    menu: Menu,
+    plus: Plus,
+    more: MoreHorizontal,
+    refresh: RotateCcw,
+    sun: Sun,
+    moon: Moon,
+    external: ExternalLink,
+    logout: LogOut
+  };
+  const Icon = icons[name];
+  return <Icon className={`refIcon refIcon-${name}`} aria-hidden="true" />;
+}
 
 function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof defaultFilters>> {
   return {
@@ -101,6 +170,25 @@ export default function App() {
   useEffect(() => {
     restoreSession();
   }, []);
+
+  useEffect(() => {
+    if (!session?.refreshToken) return;
+    const expiresAtMs = Number(session.expiresAt || 0) * 1000;
+    const fallbackDelay = 45 * 60 * 1000;
+    const delay = expiresAtMs
+      ? Math.max(5_000, expiresAtMs - Date.now() - AUTH_REFRESH_MARGIN_MS)
+      : fallbackDelay;
+
+    const timeout = window.setTimeout(() => {
+      renewSession(session.refreshToken || '').catch(() => {
+        clearStoredSession();
+        setSession(null);
+        setAuthError('Sua sessão expirou. Entre novamente.');
+      });
+    }, Math.min(delay, 2_147_000_000));
+
+    return () => window.clearTimeout(timeout);
+  }, [session?.accessToken, session?.refreshToken, session?.expiresAt]);
 
   useEffect(() => {
     stateRef.current = state;
@@ -193,20 +281,72 @@ export default function App() {
     }
   }
 
+  function clearStoredSession() {
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      storage.removeItem(AUTH_STORAGE_KEY);
+      storage.removeItem(AUTH_REFRESH_STORAGE_KEY);
+      storage.removeItem(AUTH_EXPIRES_STORAGE_KEY);
+    }
+  }
+
+  function authStorage(): Storage {
+    return window.localStorage.getItem(AUTH_STORAGE_KEY)
+      || window.localStorage.getItem(AUTH_REFRESH_STORAGE_KEY)
+      ? window.localStorage
+      : window.sessionStorage;
+  }
+
+  function persistSession(current: AuthSession, storage = authStorage()) {
+    storage.setItem(AUTH_STORAGE_KEY, current.accessToken);
+    if (current.refreshToken) storage.setItem(AUTH_REFRESH_STORAGE_KEY, current.refreshToken);
+    else storage.removeItem(AUTH_REFRESH_STORAGE_KEY);
+    if (current.expiresAt) storage.setItem(AUTH_EXPIRES_STORAGE_KEY, String(current.expiresAt));
+    else storage.removeItem(AUTH_EXPIRES_STORAGE_KEY);
+  }
+
+  async function renewSession(refreshToken = session?.refreshToken || '') {
+    if (!refreshToken) throw new Error('Sessão expirada. Entre novamente.');
+    const current = await refreshAuthSession(refreshToken);
+    persistSession(current);
+    setSession(current);
+    return current;
+  }
+
   async function restoreSession() {
-    const accessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || window.sessionStorage.getItem(AUTH_STORAGE_KEY);
-    if (!accessToken) {
+    const localAccessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || '';
+    const sessionAccessToken = window.sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+    const storage = localAccessToken ? window.localStorage : window.sessionStorage;
+    const accessToken = localAccessToken || sessionAccessToken;
+    const refreshToken = storage.getItem(AUTH_REFRESH_STORAGE_KEY) || '';
+    const expiresAt = Number(storage.getItem(AUTH_EXPIRES_STORAGE_KEY) || 0);
+
+    if (!accessToken && !refreshToken) {
       setAuthChecking(false);
       return;
     }
 
     try {
-      const current = await getCurrentUser(accessToken);
+      let current: AuthSession;
+      const tokenExpired = expiresAt > 0 && expiresAt * 1000 <= Date.now() + AUTH_REFRESH_MARGIN_MS;
+
+      if (refreshToken && (!accessToken || tokenExpired)) {
+        current = await refreshAuthSession(refreshToken);
+        persistSession(current, storage);
+      } else {
+        try {
+          const user = await getCurrentUser(accessToken);
+          current = { ...user, refreshToken, expiresAt };
+        } catch (error) {
+          if (!refreshToken) throw error;
+          current = await refreshAuthSession(refreshToken);
+          persistSession(current, storage);
+        }
+      }
+
       setSession(current);
-      await refreshState(accessToken);
+      await refreshState(current.accessToken);
     } catch {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      clearStoredSession();
       setSession(null);
     } finally {
       setAuthChecking(false);
@@ -218,10 +358,9 @@ export default function App() {
     setError('');
     try {
       const current = await signIn(email, password);
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      clearStoredSession();
       const storage = keepConnected ? window.localStorage : window.sessionStorage;
-      storage.setItem(AUTH_STORAGE_KEY, current.accessToken);
+      persistSession(current, storage);
       setSession(current);
       await refreshState(current.accessToken);
     } catch (err) {
@@ -234,8 +373,7 @@ export default function App() {
   }
 
   function logoutCore() {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    clearStoredSession();
     setSession(null);
     setAppState({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
     clearDispatchSnapshot();
@@ -526,7 +664,7 @@ export default function App() {
     if (nextTab === tab) return;
     const lockedDispatchChannel = modal === 'dispatchDetails'
       ? viewingDispatch?.channel || 'email'
-      : modal === 'dispatch' && editingDispatchMode === 'edit'
+      : modal === 'dispatch'
         ? editingDispatch.channel || 'email'
         : null;
     if (
@@ -544,6 +682,10 @@ export default function App() {
     setTab(nextTab);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleSidebar() {
+    setSidebarOpen(current => !current);
   }
 
   function openDispatch(dispatch?: Dispatch) {
@@ -917,6 +1059,23 @@ export default function App() {
     .slice(0, 2)
     .map(part => part[0]?.toUpperCase())
     .join('');
+  const dispatchCounts = {
+    email: state.dispatches.filter(item => (item.channel || 'email') === 'email').length,
+    whatsapp: state.dispatches.filter(item => item.channel === 'whatsapp').length,
+    html_email: state.dispatches.filter(item => item.channel === 'html_email').length
+  };
+  const attentionCount = state.dispatches
+    .filter(dispatch => dispatchValidation(dispatch, state.bases).level !== 'green')
+    .length;
+  const pageEyebrow = tab === 'calendar'
+    ? 'ORGANIZAÇÃO & AGENDA'
+    : tab === 'bases'
+      ? 'GESTÃO DE DADOS'
+      : tab === 'catalogs'
+        ? 'CONFIGURAÇÕES'
+        : tab === 'overview'
+          ? 'MARKETING & RELACIONAMENTO'
+          : 'CANAIS DE DISPARO';
   const readinessChecks = dispatchReadinessChecks({
     ...editingDispatch,
     responsible: sessionResponsible || editingDispatch.responsible
@@ -953,40 +1112,92 @@ export default function App() {
   return (
     <div className="appShell">
       {sidebarOpen && <button className="sidebarScrim" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+      <aside id="main-sidebar" className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebarBrand">
           <img className="sidebarBrandLogo" src="/unigran-logo.png" alt="UNIGRAN" />
+          <p className="sidebarBrandSubtitle">Planejamento de Disparos</p>
         </div>
         <nav className="sidebarNav" aria-label="Navegação principal">
-          <button aria-pressed={tab === 'overview'} className={tab === 'overview' ? 'active' : ''} onClick={() => navigate('overview')}><span aria-hidden="true">⌂</span>Visão geral</button>
-          <span className="sidebarNavLabel">DISPAROS</span>
-          <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}><span aria-hidden="true">✉</span>E-mail</button>
-          <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}><span aria-hidden="true">◉</span>WhatsApp</button>
-          <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}><span aria-hidden="true">◇</span>E-mail HTML</button>
-          <span className="sidebarNavLabel">ORGANIZAÇÃO</span>
-          <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => navigate('calendar')}><span aria-hidden="true">▦</span>Calendário</button>
-          <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => navigate('bases')}><span aria-hidden="true">◎</span>Regras de bases</button>
-          <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => navigate('catalogs')}><span aria-hidden="true">▤</span>Cadastros</button>
+          <span className="sidebarNavLabel">Principal</span>
+          <button aria-pressed={tab === 'overview'} className={tab === 'overview' ? 'active' : ''} onClick={() => navigate('overview')}>
+            <span aria-hidden="true"><RefIcon name="dashboard" /></span>
+            <em>Visão geral</em>
+            {attentionCount > 0 && <b>{attentionCount} pendente{attentionCount > 1 ? 's' : ''}</b>}
+          </button>
+          <span className="sidebarNavLabel withSpark">Canais de Disparo <RefIcon name="sparkles" /></span>
+          <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}>
+            <span aria-hidden="true" className="accentEmail"><RefIcon name="mail" /></span>
+            <em>E-mail</em>
+            <b className="channelCount email">{dispatchCounts.email}</b>
+          </button>
+          <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}>
+            <span aria-hidden="true" className="accentWhatsapp"><RefIcon name="message" /></span>
+            <em>WhatsApp</em>
+            <b className="channelCount whatsapp">{dispatchCounts.whatsapp}</b>
+          </button>
+          <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}>
+            <span aria-hidden="true" className="accentHtml"><RefIcon name="code" /></span>
+            <em>E-mail HTML</em>
+            <b className="channelCount html_email">{dispatchCounts.html_email}</b>
+          </button>
+          <span className="sidebarNavLabel">Gestão & Organização</span>
+          <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => navigate('calendar')}>
+            <span aria-hidden="true"><RefIcon name="calendar" /></span>
+            <em>Calendário Mensal</em>
+            <RefIcon name="chevron" />
+          </button>
+          <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => navigate('bases')}>
+            <span aria-hidden="true"><RefIcon name="database" /></span>
+            <em>Regras de Bases</em>
+            <RefIcon name="chevron" />
+          </button>
+          <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => navigate('catalogs')}>
+            <span aria-hidden="true"><RefIcon name="folder" /></span>
+            <em>Cadastros Gerais</em>
+            <RefIcon name="chevron" />
+          </button>
         </nav>
         <div className="sidebarUser">
-          <span className="sidebarAvatar">{userInitials}</span>
-          <div><strong>{session.name || 'Usuário'}</strong><span>{session.email}</span></div>
+          <div className="sidebarUserCard">
+            <div className="sidebarAvatarWrap">
+              <span className="sidebarAvatar">{userInitials || 'U'}</span>
+              <span className="sidebarOnlineDot" aria-hidden="true" />
+            </div>
+            <div className="sidebarUserMeta">
+              <strong>
+                <span>{session.name || 'Usuário'}</span>
+                <RefIcon name="shield" />
+              </strong>
+              <span title={session.email}>{session.email}</span>
+            </div>
+          </div>
         </div>
       </aside>
 
       <main className="mainWorkspace">
         <header className="topbar">
           <div className="topbarTitle">
-            <button className="mobileMenu" type="button" aria-label="Abrir menu" onClick={() => setSidebarOpen(true)}>☰</button>
+            <button
+              className="mobileMenu"
+              type="button"
+              aria-label={sidebarOpen ? 'Fechar menu' : 'Abrir menu'}
+              aria-expanded={sidebarOpen}
+              aria-controls="main-sidebar"
+              onClick={toggleSidebar}
+            ><RefIcon name="menu" /></button>
             <div>
-            <p>Marketing &amp; Relacionamento</p>
+            <p>{pageEyebrow}</p>
             <h1>{pageTitle}</h1>
             </div>
           </div>
           <div className="topbarActions">
             {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
-              <button className="btn primary topbarNew" onClick={() => openDispatch()}>＋ Novo disparo</button>
+              <button className="btn primary topbarNew" onClick={() => openDispatch()}><RefIcon name="plus" /> Novo disparo</button>
             )}
+            <button type="button" className="topbarThemeButton" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}>
+              {theme === 'dark' ? <RefIcon name="sun" /> : <RefIcon name="moon" />}
+              <span>{theme === 'dark' ? 'Claro' : 'Escuro'}</span>
+            </button>
           <details className="headerMenu" open={headerMenuOpen}>
             <summary
               aria-label="Abrir ações rápidas"
@@ -995,11 +1206,11 @@ export default function App() {
                 setHeaderMenuOpen(current => !current);
               }}
             >
-              •••
+              <RefIcon name="more" />
             </summary>
             <div className="headerMenuPanel">
               <div className="themeMenuRow">
-                <span>{theme === 'dark' ? '🌙 Escuro' : '☀ Claro'}</span>
+                <span>{theme === 'dark' ? <><RefIcon name="moon" /> Escuro</> : <><RefIcon name="sun" /> Claro</>}</span>
                 <button
                   type="button"
                   className={`themeSwitch ${theme === 'dark' ? 'active' : ''}`}
@@ -1017,12 +1228,12 @@ export default function App() {
                   closeModal();
                   refreshState();
                 });
-              }} disabled={loading || saving}>{loading ? 'Recarregando...' : 'Recarregar'}</button>
-              <a className="menuFormatter" href="https://formatador-rd.vercel.app/" target="_blank" rel="noreferrer" onClick={() => setHeaderMenuOpen(false)}>Unigran Formater</a>
+              }} disabled={loading || saving}><RefIcon name="refresh" /> {loading ? 'Recarregando...' : 'Recarregar'}</button>
+              <a className="menuFormatter" href="https://formatador-rd.vercel.app/" target="_blank" rel="noreferrer" onClick={() => setHeaderMenuOpen(false)}><RefIcon name="external" /> Unigran Formater</a>
               <button type="button" className="menuLogout" onClick={() => {
                 setHeaderMenuOpen(false);
                 logout();
-              }}>Sair</button>
+              }}><RefIcon name="logout" /> Sair</button>
             </div>
           </details>
           </div>
@@ -1044,47 +1255,35 @@ export default function App() {
       )}
 
       {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
-        <>
+        <section className={`channelView channelView-${activeChannel}`}>
+          <div className="channelHeroCard">
+            <div className="channelHeroCopy">
+              <div className="channelHeroMeta">
+                <span className={`channelHeroBadge ${activeChannel}`}>{channelLabel}</span>
+                <span>Gestão e Validação</span>
+              </div>
+              <h2>Disparos Programados de {channelLabel}</h2>
+              <p>Acompanhe, altere status e verifique a prontidão dos disparos desta modalidade.</p>
+            </div>
+            <button className="btn primary channelNewDispatch" onClick={() => openDispatch()}><RefIcon name="plus" /> Novo Disparo</button>
+          </div>
+
+          <div className="channelQuickStats" aria-label="Resumo do canal">
+            <span><strong>{metrics.total}</strong> total</span>
+            <span className="ready"><strong>{metrics.ready}</strong> prontos</span>
+            <span className="pending"><strong>{metrics.pending}</strong> pendências</span>
+            <span className="sent"><strong>{metrics.sent}</strong> enviados</span>
+          </div>
+
           <div className="channelSegmented" aria-label="Canal de disparo">
             <button className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}>E-mail <span>{state.dispatches.filter(item => (item.channel || 'email') === 'email').length}</span></button>
             <button className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}>WhatsApp <span>{state.dispatches.filter(item => item.channel === 'whatsapp').length}</span></button>
             <button className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}>HTML <span>{state.dispatches.filter(item => item.channel === 'html_email').length}</span></button>
           </div>
-          <section className="summary">
-            <Metric label="Total de disparos" value={metrics.total} />
-            <Metric label="Planejados" value={metrics.planned} />
-            <Metric label="Enviados" value={metrics.sent} />
-            <Metric label="Pendentes" value={metrics.pending} />
-            <Metric label="Com sobreposição" value={metrics.overlap} tone="warning" />
-            <Metric label="Sem base" value={metrics.missingBase} tone="risk" />
-            <Metric label="Prontos" value={metrics.ready} />
-          </section>
 
-          <section className="dailyPanel">
-            <div>
-              <div className="panelHead compact">
-                <div>
-                  <h2>Próximos disparos</h2>
-                  <p>Agenda dos próximos 15 dias de {channelLabel}</p>
-                </div>
-              </div>
-              <UpcomingList dispatches={upcomingDispatches} bases={state.bases} />
-            </div>
-            <div>
-              <div className="panelHead compact">
-                <div>
-                  <h2>Pendências de cadastro</h2>
-                  <p>Campos incompletos que podem travar o fluxo</p>
-                </div>
-              </div>
-              <IssueList items={incompleteItems} />
-            </div>
-          </section>
-
-          <section className="panel">
+          <section className="panel channelTablePanel">
             <div className="filterToolbar">
-              <button className="btn primary newDispatchButton" onClick={() => openDispatch()}>Novo disparo</button>
-              <input className="quickSearch" placeholder="Buscar..." value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
+              <input className="quickSearch" placeholder="Buscar campanha, template, público..." value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
               <select className="quickFilter" value="" onChange={event => setPeriodPreset(event.target.value)}>
                 <option value="">Período</option>
                 <option value="7">Próximos 7 dias</option>
@@ -1092,8 +1291,8 @@ export default function App() {
                 <option value="30">Próximos 30 dias</option>
               </select>
               <Select value={filters.status} values={STATUS} placeholder="Status" onChange={value => updateFilter('status', value)} />
-              <button className="btn ghost small" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded(current => !current)}>☷ Mais filtros</button>
-              <button className="btn ghost small" onClick={clearCurrentFilters}>Limpar filtros</button>
+              <button className="btn ghost small" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded(current => !current)}>☷ Filtros</button>
+              <button className="btn ghost small" onClick={clearCurrentFilters}>Limpar</button>
             </div>
             {activeFilterChips.length > 0 && (
               <div className="activeFilterChips" aria-label="Filtros ativos">
@@ -1160,48 +1359,75 @@ export default function App() {
               onStatus={changeStatus}
             />
           </section>
-        </>
+
+          <details className="channelOperationalDetails">
+            <summary>Visão operacional complementar</summary>
+            <section className="summary">
+              <Metric label="Total de disparos" value={metrics.total} />
+              <Metric label="Planejados" value={metrics.planned} />
+              <Metric label="Enviados" value={metrics.sent} />
+              <Metric label="Pendentes" value={metrics.pending} />
+              <Metric label="Com sobreposição" value={metrics.overlap} tone="warning" />
+              <Metric label="Sem base" value={metrics.missingBase} tone="risk" />
+              <Metric label="Prontos" value={metrics.ready} />
+            </section>
+            <section className="dailyPanel">
+              <div>
+                <div className="panelHead compact"><div><h2>Próximos disparos</h2><p>Agenda dos próximos 15 dias de {channelLabel}</p></div></div>
+                <UpcomingList dispatches={upcomingDispatches} bases={state.bases} />
+              </div>
+              <div>
+                <div className="panelHead compact"><div><h2>Pendências de cadastro</h2><p>Campos incompletos que podem travar o fluxo</p></div></div>
+                <IssueList items={incompleteItems} />
+              </div>
+            </section>
+          </details>
+        </section>
       )}
 
       {tab === 'calendar' && (
-        <section className="panel calendarPanel">
-          <div className="panelHead">
+        <section className="calendarView">
+          <div className="calendarHeaderCard">
             <div>
-              <h2>Calendário de disparos</h2>
-              <p>E-mail, WhatsApp e HTML no mesmo mês</p>
+              <div className="calendarHeaderMeta"><span>Agenda Multi-canal</span><em>Visualização Unificada</em></div>
+              <h2>{monthLabel(calendarMonth)}</h2>
+              <p>Acompanhe a distribuição temporal dos disparos de e-mail, WhatsApp e HTML em uma única grade.</p>
             </div>
-            <div className="calendarActions calendarToolbar">
-              <div className="calendarNavGroup">
-                <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>‹ Mês anterior</button>
-                <strong>{monthLabel(calendarMonth)}</strong>
-                <button className="btn ghost small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
-                <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo mês ›</button>
-              </div>
+            <div className="calendarNavGroup">
+              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>‹ Anterior</button>
+              <button className="btn calendarToday small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
+              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo ›</button>
+            </div>
+          </div>
+          <div className="calendarMainCard">
+            <div className="calendarLegendBar">
               <div className="calendarLegend" aria-label="Legenda das modalidades">
                 <span><i className="email" />E-mail</span>
                 <span><i className="whatsapp" />WhatsApp</span>
                 <span><i className="html_email" />E-mail HTML</span>
               </div>
+              <small>Clique em qualquer data para abrir a lista detalhada do dia</small>
             </div>
+            <CalendarView
+              month={calendarMonth}
+              dispatches={calendarDispatches}
+              onView={dispatch => openDispatchDetails(dispatch, true)}
+              onDayView={openCalendarDay}
+              onCreate={openDispatchForDate}
+            />
           </div>
-          <CalendarView
-            month={calendarMonth}
-            dispatches={calendarDispatches}
-            onView={dispatch => openDispatchDetails(dispatch, true)}
-            onDayView={openCalendarDay}
-            onCreate={openDispatchForDate}
-          />
         </section>
       )}
 
       {tab === 'bases' && (
         <section className="panel baseRulesPanel">
-          <div className="panelHead">
+          <div className="panelHead baseRulesHead">
             <div>
-              <h2>Regras de bases</h2>
-              <p>{filteredBases.length} de {state.bases.length} regra(s)</p>
+              <div className="baseRulesMeta"><span>Governança de Dados</span><em>Bases & Segmentações</em></div>
+              <h2>Regras de Bases por Campanha</h2>
+              <p>Defina quais bases de dados devem ser utilizadas, exclusões obrigatórias e ações prévias de atualização.</p>
             </div>
-            <button className="btn primary" onClick={() => openBase()}>Nova regra</button>
+            <button className="btn primary" onClick={() => openBase()}><RefIcon name="plus" /> Nova Regra</button>
           </div>
           <div className="listControls">
             <input
@@ -1274,13 +1500,14 @@ export default function App() {
             <ModalHead eyebrow="PLANEJAMENTO" title={editingDispatchMode === 'edit' ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={requestModalClose} />
             <div className="dispatchFormLayout">
             <div className="dispatchFormContent">
+            <div className="formSectionTitle modalityTitle">Modalidade</div>
             <div className="channelSelector">
               <button type="button" className={editingDispatch.channel === 'email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('email')}>✉ E-mail</button>
               <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('whatsapp')}>◉ WhatsApp</button>
               <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('html_email')}>◇ E-mail HTML</button>
             </div>
             <section className="formSection">
-              <div className="formSectionTitle">Planejamento</div>
+              <div className="formSectionTitle">1. Planejamento & Cronograma</div>
               <div className="modalGrid dispatchPlanningGrid">
               <Field label="Data de disparo">
                 <BrazilianDatePicker
@@ -1354,7 +1581,7 @@ export default function App() {
               </div>
             </section>
             <section className="formSection">
-              <div className="formSectionTitle">Conteúdo · {channelName(editingDispatch.channel || 'email')}</div>
+              <div className="formSectionTitle">2. Conteúdo do Disparo · {channelName(editingDispatch.channel || 'email')}</div>
               <div className="modalGrid dispatchContentGrid">
               {editingDispatch.channel !== 'whatsapp' && (
                 <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>
@@ -1392,7 +1619,7 @@ export default function App() {
             </section>
             </div>
             <aside className="readinessPanel">
-              <div className="readinessTop"><span>Prontidão</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
+              <div className="readinessTop"><span>3. Checklist de Prontidão Operacional</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
               <div className="readinessProgress"><i style={{ width: `${(readinessCompleted / readinessChecks.length) * 100}%` }} /></div>
               <ul>
                 {readinessChecks.map(check => <li className={check.done ? 'done' : 'pending'} key={check.key}><span>{check.done ? '✓' : '!'}</span>{check.label}</li>)}

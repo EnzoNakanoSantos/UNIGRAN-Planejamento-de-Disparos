@@ -1,6 +1,5 @@
 import type { BaseRule } from '../../types';
 import { baseValidation, fmtDate } from '../../logic';
-import { ValidationBadge } from '../../components/feedback/ValidationBadge';
 
 function BaseInfo({ label, value }: { label: string; value: string }) {
   return (
@@ -26,16 +25,16 @@ export function BaseTable({ bases, onEdit, onDelete }: {
             <header>
               <div>
                 <h3>{base.campaign || 'Sem campanha'}</h3>
-                <p>Atualizada em {fmtDate(base.lastUpdated)} · {base.responsible || 'Sem responsável'}</p>
+                <p>{base.responsible || 'Sem responsável'} · Atualizada em {fmtDate(base.lastUpdated)}</p>
               </div>
-              <ValidationBadge validation={validation} />
+              <span className={`validation ${validation.level}`} title={validation.issues.join(' | ')}>{validation.level === 'green' ? 'Atualizada' : validation.level === 'yellow' ? 'Revisar Base' : 'Risco'}</span>
             </header>
 
             <div className="baseRuleDetails">
               <BaseInfo label="Base de disparo" value={base.mainBase} />
-              <BaseInfo label="Excluir" value={base.excludedBases || 'Nenhuma exclusão'} />
+              <BaseInfo label="Exclusões" value={base.excludedBases || 'Nenhuma exclusão'} />
               <BaseInfo label="Ação esperada" value={base.expectedAction} />
-              <BaseInfo label="Arquivo" value={base.spreadsheetAttachment?.name || 'Nenhum arquivo'} />
+              <BaseInfo label="Arquivo Anexo" value={base.spreadsheetAttachment?.name || 'Nenhum arquivo'} />
             </div>
 
             {base.notes && <p className="baseRuleNotes">{base.notes}</p>}

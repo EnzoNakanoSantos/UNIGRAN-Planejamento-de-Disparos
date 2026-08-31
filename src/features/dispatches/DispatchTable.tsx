@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CalendarCheck, CalendarX, Copy, Edit, MoreVertical, Send, Trash2 } from 'lucide-react';
 import type { BaseRule, Dispatch, DispatchStatus } from '../../types';
 import { dispatchValidation, fmtDate } from '../../logic';
 import { dispatchDisplayName, dispatchTime, duplicateNameCount } from '../../utils/app';
@@ -186,8 +187,8 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                   </td>
                   <td onClick={event => event.stopPropagation()}>
                     <div className="actions dispatchActionsCell">
-                      <button onClick={() => onEdit(dispatch)}>Editar</button>
-                      <button onClick={() => onDuplicate(dispatch)}>Duplicar</button>
+                      <button onClick={() => onEdit(dispatch)}><Edit className="actionIcon" />Editar</button>
+                      <button onClick={() => onDuplicate(dispatch)}><Copy className="actionIcon" />Duplicar</button>
                       <div className="rowActionMenu">
                       <button
                         type="button"
@@ -205,7 +206,7 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                             });
                         }}
                       >
-                        •••
+                        <MoreVertical className="actionIcon" />
                       </button>
                       {actionMenu?.id === dispatch.id && (
                         <div className="rowActionMenuPanel floating" style={{ top: actionMenu.top, left: actionMenu.left }}>
@@ -213,21 +214,21 @@ export function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onV
                             <button type="button" onClick={() => {
                               setActionMenu(null);
                               onStatus(dispatch.id, 'Enviado');
-                            }}>Marcar como enviado</button>
+                            }}><Send className="actionIcon" />Marcar como enviado</button>
                           )}
                           <button type="button" disabled={dispatch.status !== 'Pronto para disparo'} onClick={() => {
                             setActionMenu(null);
                             onSyncCalendar(dispatch);
-                          }}>Sincronizar Calendar</button>
+                          }}><CalendarCheck className="actionIcon" />Sincronizar Calendar</button>
                           <button type="button" onClick={() => {
                             setActionMenu(null);
                             onRemoveCalendar(dispatch);
-                          }}>Remover do Calendar</button>
+                          }}><CalendarX className="actionIcon" />Remover do Calendar</button>
                           <button type="button" className="danger" onClick={() => {
                             setActionMenu(null);
                             setSelected([dispatch.id]);
                             setConfirming(true);
-                          }}>Excluir</button>
+                          }}><Trash2 className="actionIcon" />Excluir</button>
                         </div>
                       )}
                       </div>

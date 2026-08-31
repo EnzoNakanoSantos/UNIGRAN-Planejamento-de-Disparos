@@ -18,11 +18,11 @@ export function CalendarView({ month, dispatches, onView, onDayView, onCreate }:
 
   return (
     <div className="calendar">
-      {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => <div className="calendarWeekday" key={day}>{day}</div>)}
+      {['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'].map(day => <div className="calendarWeekday" key={day}>{day}</div>)}
       {days.map(day => {
         const items = byDate.get(day) || [];
         const outside = !day.startsWith(month);
-        const previewItems = items.slice(0, 3);
+        const previewItems = items.slice(0, 2);
         const hiddenCount = Math.max(0, items.length - previewItems.length);
         return (
           <div
@@ -59,8 +59,8 @@ export function CalendarView({ month, dispatches, onView, onDayView, onCreate }:
                   <small>{channelName(dispatch.channel || 'email')}</small>
                 </button>
               ))}
-              {hiddenCount > 0 && <span className="calendarMore">+ {hiddenCount} disparo(s). Clique no dia para ver todos.</span>}
-              {!outside && items.length === 0 && (
+              {hiddenCount > 0 && <span className="calendarMore">+ {hiddenCount} disparo(s)</span>}
+              {!outside && (
                 <button
                   type="button"
                   className="calendarEmptyCreate"
@@ -68,7 +68,7 @@ export function CalendarView({ month, dispatches, onView, onDayView, onCreate }:
                     event.stopPropagation();
                     onCreate(day);
                   }}
-                >＋ Criar disparo</button>
+                >＋ Novo</button>
               )}
             </div>
           </div>

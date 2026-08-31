@@ -9,7 +9,7 @@ import { missingReadyDispatchFields, shouldValidateReadiness } from '../shared/d
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 6000);
 const ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT, 'dist');
 const INDEX_FILE = path.join(ROOT, 'index.html');
@@ -287,10 +287,26 @@ async function signIn(email, password) {
     body: JSON.stringify({ email, password })
   });
   if (!data?.access_token) throw new Error('Supabase não retornou sessão de login.');
-  return authorizeSession(data.access_token);
+  return authorizeSession(data.access_token, {
+    refreshToken: data.refresh_token || '',
+    expiresAt: Number(data.expires_at || 0)
+  });
 }
 
-async function authorizeSession(accessToken) {
+async function refreshSession(refreshToken) {
+  if (!refreshToken) throw new Error('Sessão expirada. Entre novamente.');
+  const data = await supabaseAuthRequest('/token?grant_type=refresh_token', {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+  if (!data?.access_token) throw new Error('Supabase não retornou uma nova sessão.');
+  return authorizeSession(data.access_token, {
+    refreshToken: data.refresh_token || refreshToken,
+    expiresAt: Number(data.expires_at || 0)
+  });
+}
+
+async function authorizeSession(accessToken, authSession = {}) {
   if (!accessToken) throw new Error('Sessão não informada');
   const user = await supabaseAuthRequest('/user', {
     method: 'GET',
@@ -311,6 +327,8 @@ async function authorizeSession(accessToken) {
 
   return {
     accessToken,
+    refreshToken: authSession.refreshToken || '',
+    expiresAt: Number(authSession.expiresAt || 0),
     email,
     name: allowed[0].name || '',
     role: allowed[0].role || 'user'
@@ -826,6 +844,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       sendJson(res, 200, await signIn(email, password));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/auth/refresh') {
+      const body = await readJsonBody(req);
+      const refreshToken = String(body.refreshToken || body.refresh_token || '');
+      sendJson(res, 200, await refreshSession(refreshToken));
       return;
     }
 
