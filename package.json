@@ -5,15 +5,18 @@
   "description": "Aplicacao local para planejamento de disparos de e-mails.",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --port 5000",
+    "dev:full": "node scripts/dev-full.mjs",
     "server": "node backend/server.js",
     "start": "node backend/server.js",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test backend/*.test.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^0.546.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2",

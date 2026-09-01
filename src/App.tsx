@@ -1,198 +1,364 @@
-import type { FormEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { getCurrentUser, loadState, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
+import type { FormEvent } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Calendar,
+  ChevronRight,
+  Code2,
+  Database,
+  ExternalLink,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  Mail,
+  Menu,
+  MessageSquare,
+  Moon,
+  MoreHorizontal,
+  Plus,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  type LucideIcon
+} from 'lucide-react';
+import { getCurrentUser, loadState, refreshAuthSession, saveState, sendCalendarToN8n, signIn, type AuthSession } from './api';
 import { addDaysISO, baseValidation, dispatchValidation, fmtDate, isBaseStale, overlapMap, todayISO, uid } from './logic';
-import { AppState, BaseRule, Dispatch, DispatchChannel, DispatchChip, DispatchStatus, FileAttachment, STATUS } from './types';
+import { AUTH_STORAGE_KEY, CHIP_OPTIONS, DISPATCH_FORM_STATUS, EXCEL_TYPES, MAX_ATTACHMENT_SIZE, RESPONSIBLE_BY_EMAIL } from './config/dispatch';
+import { emptyBase, emptyDispatch, defaultFilters } from './utils/factories';
+import { calendarDays, channelName, dispatchDisplayName, dispatchSortValue, dispatchTime, duplicateDispatchNameMap, duplicateNameCount, fileToAttachment, formatBytes, isExcelFile, isoDate, missingBaseFields, missingDispatchFields, monthLabel, normalizeState, responsibleForEmail, richTextHtml, shiftMonth, statusClass, unique } from './utils/app';
+import type { AppState, BaseRule, BaseSort, CatalogKey, Dispatch, DispatchChannel, DispatchChip, DispatchSortField, DispatchStatus, FileAttachment, FilterKey, Modal, SortDirection, Tab } from './types';
+import { STATUS } from './types';
+import { Login } from './features/auth/Login';
+import { CatalogManager } from './features/catalogs/CatalogManager';
+import { RichTextEditor } from './features/dispatches/RichTextEditor';
+import { CalendarDayDetails, CalendarView } from './features/calendar/CalendarView';
+import { ValidationBadge } from './components/feedback/ValidationBadge';
+import { BaseTable } from './features/bases/BaseTable';
+import { BrazilianDatePicker, Metric, Select, SelectWithCreate, StatusSelect, TwentyFourHourPicker } from './components/forms/Controls';
+import { DispatchTable } from './features/dispatches/DispatchTable';
+import { DispatchDetails } from './features/dispatches/DispatchDetails';
+import { ConfirmDialog, Field, ModalFoot, ModalHead } from './components/modal/ModalParts';
+import { AttachmentPicker, SpreadsheetAttachmentPicker } from './components/forms/AttachmentPickers';
+import { IssueList, UpcomingList } from './features/dispatches/DashboardLists';
+import { useCalendar } from './features/calendar/useCalendar';
+import { useHeaderMenu } from './hooks/useHeaderMenu';
+import { OverviewDashboard } from './features/overview/OverviewDashboard';
+import { dispatchReadinessChecks, missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
+import { dispatchSnapshot, hasUnsavedDispatchChanges } from '../shared/dirty-state.js';
+import { duplicateDispatchDraft } from '../shared/dispatch-duplicate.js';
+import { suggestDispatchFields } from '../shared/dispatch-smart-fill.js';
 
-type Tab = 'email' | 'whatsapp' | 'html_email' | 'calendar' | 'bases' | 'catalogs';
-type Modal = 'dispatch' | 'dispatchDetails' | 'calendarDay' | 'base' | null;
-type CatalogKey = 'campaigns' | 'audiences' | 'responsibles';
-type FilterState = {
-  q: string;
-  start: string;
-  end: string;
-  campaign: string;
-  audience: string;
-  status: string;
-  base: string;
-  responsible: string;
-  validation: string;
-  pending: boolean;
-  sent: boolean;
-  alert: boolean;
-  overlap: boolean;
-  missingBase: boolean;
-  staleBase: boolean;
-  readyOnly: boolean;
-};
-type FilterKey = keyof FilterState;
-type BaseSort = 'name' | 'date-desc' | 'date-asc';
-type DispatchSortField = 'dispatchDate' | 'createdAt' | 'updatedAt';
-type SortDirection = 'asc' | 'desc';
+type FeedbackType = 'success' | 'warning' | 'error' | 'info';
+type Feedback = { type: FeedbackType; message: string };
+type PendingDiscardAction = { run: () => void };
+type DispatchFormMode = 'create' | 'edit';
+type ThemeMode = 'light' | 'dark';
 
-const defaultFilters = (): FilterState => ({
-  q: '',
-  start: '',
-  end: '',
-  campaign: '',
-  audience: '',
-  status: '',
-  base: '',
-  responsible: '',
-  validation: '',
-  pending: false,
-  sent: false,
-  alert: false,
-  overlap: false,
-  missingBase: false,
-  staleBase: false,
-  readyOnly: false
-});
+const LAST_RESPONSIBLE_STORAGE_KEY = 'unigran-last-responsible-by-channel';
+const AUTH_REFRESH_STORAGE_KEY = `${AUTH_STORAGE_KEY}-refresh`;
+const AUTH_EXPIRES_STORAGE_KEY = `${AUTH_STORAGE_KEY}-expires-at`;
+const AUTH_REFRESH_MARGIN_MS = 60_000;
+const THEME_COOKIE_KEY = 'planner-theme';
+const DISPATCH_TABS: DispatchChannel[] = ['email', 'whatsapp', 'html_email'];
 
-const emptyDispatch = (channel: DispatchChannel = 'email'): Dispatch => ({
-  id: '',
-  channel,
-  date: todayISO(),
-  time: '',
-  templateName: '',
-  chip: '',
-  htmlContent: '',
-  subject: '',
-  body: '',
-  attachments: [],
-  campaign: '',
-  audience: '',
-  description: '',
-  status: 'Planejado',
-  baseId: '',
-  responsible: '',
-  googleCalendarEventId: '',
-  createdAt: '',
-  updatedAt: ''
-});
+type IconName =
+  | 'dashboard'
+  | 'mail'
+  | 'message'
+  | 'code'
+  | 'calendar'
+  | 'database'
+  | 'folder'
+  | 'sparkles'
+  | 'chevron'
+  | 'shield'
+  | 'menu'
+  | 'plus'
+  | 'more'
+  | 'refresh'
+  | 'sun'
+  | 'moon'
+  | 'external'
+  | 'logout';
 
-const emptyBase = (): BaseRule => ({
-  id: '',
-  campaign: '',
-  mainBase: '',
-  excludedBases: '',
-  expectedAction: '',
-  lastUpdated: todayISO(),
-  responsible: '',
-  notes: '',
-  spreadsheetAttachment: null
-});
+function RefIcon({ name }: { name: IconName }) {
+  const icons: Record<IconName, LucideIcon> = {
+    dashboard: LayoutDashboard,
+    mail: Mail,
+    message: MessageSquare,
+    code: Code2,
+    calendar: Calendar,
+    database: Database,
+    folder: FolderKanban,
+    sparkles: Sparkles,
+    chevron: ChevronRight,
+    shield: ShieldCheck,
+    menu: Menu,
+    plus: Plus,
+    more: MoreHorizontal,
+    refresh: RotateCcw,
+    sun: Sun,
+    moon: Moon,
+    external: ExternalLink,
+    logout: LogOut
+  };
+  const Icon = icons[name];
+  return <Icon className={`refIcon refIcon-${name}`} aria-hidden="true" />;
+}
 
-const DISPATCH_FORM_STATUS: DispatchStatus[] = [
-  'Planejado',
-  'Em produção',
-  'Pronto para disparo'
-];
-const CHIP_OPTIONS: DispatchChip[] = ['EAD', 'DOU', 'CGR', 'U.S.A'];
-const MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024;
-const EXCEL_TYPES = [
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-];
-const AUTH_STORAGE_KEY = 'unigran-disparos-session';
-const RESPONSIBLE_BY_EMAIL: Record<string, string> = {
-  'mktdigital02.ead@unigran.br': 'Enzo Nakano',
-  'mktdigital01.ead@unigran.br': 'Raquel Kuhnen',
-  'mktdigital06.ead@unigran.br': 'Matheus Salazar'
-};
+function defaultFiltersByChannel(): Record<DispatchChannel, ReturnType<typeof defaultFilters>> {
+  return {
+    email: defaultFilters(),
+    whatsapp: defaultFilters(),
+    html_email: defaultFilters()
+  };
+}
+
+function writeThemeCookie(theme: ThemeMode) {
+  const maxAge = 60 * 60 * 24 * 365;
+  try {
+    document.cookie = `${THEME_COOKIE_KEY}=${encodeURIComponent(theme)}; Max-Age=${maxAge}; Path=/; SameSite=Lax`;
+  } catch {
+    // Mantém o tema aplicado na sessão atual mesmo se o navegador bloquear cookies.
+  }
+}
 
 export default function App() {
   const [state, setState] = useState<AppState>({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
   const stateRef = useRef(state);
-  const saveQueueRef = useRef(Promise.resolve());
+  const saveQueueRef = useRef(Promise.resolve(true));
   const saveVersionRef = useRef(0);
   const activeSavesRef = useRef(0);
+  const calendarOperationsRef = useRef(new Set<string>());
+  const initialDispatchSnapshotRef = useRef('');
+  const initialDispatchRef = useRef<Dispatch | null>(null);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [authError, setAuthError] = useState('');
-  const [tab, setTab] = useState<Tab>('email');
+  const [tab, setTab] = useState<Tab>('overview');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
-  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const { headerMenuOpen, setHeaderMenuOpen } = useHeaderMenu();
   const [editingDispatch, setEditingDispatch] = useState<Dispatch>(emptyDispatch());
+  const [editingDispatchMode, setEditingDispatchMode] = useState<DispatchFormMode>('create');
   const [viewingDispatch, setViewingDispatch] = useState<Dispatch | null>(null);
   const [viewingDispatchFromCalendar, setViewingDispatchFromCalendar] = useState(false);
-  const [viewingDay, setViewingDay] = useState('');
   const [editingBase, setEditingBase] = useState<BaseRule>(emptyBase());
   const [dispatchSortField, setDispatchSortField] = useState<DispatchSortField>('dispatchDate');
   const [dispatchSortDirection, setDispatchSortDirection] = useState<SortDirection>('asc');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [calendarSyncing, setCalendarSyncing] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
-  const [error, setError] = useState('');
-  const [savedMessage, setSavedMessage] = useState('');
-  const [filters, setFilters] = useState(defaultFilters);
-  const [calendarMonth, setCalendarMonth] = useState(todayISO().slice(0, 7));
+  const [dispatchDeleteTarget, setDispatchDeleteTarget] = useState<Dispatch | null>(null);
+  const [baseDeleteTarget, setBaseDeleteTarget] = useState<BaseRule | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof document === 'undefined') return 'light';
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  });
+  const [dispatchFieldErrors, setDispatchFieldErrors] = useState<string[]>([]);
+  const [pendingDiscardAction, setPendingDiscardAction] = useState<PendingDiscardAction | null>(null);
+  const [suggestedFields, setSuggestedFields] = useState<string[]>([]);
+  const [filtersByChannel, setFiltersByChannel] = useState(defaultFiltersByChannel);
   const [baseQuery, setBaseQuery] = useState('');
   const [baseSort, setBaseSort] = useState<BaseSort>('name');
+  const [activeCatalog, setActiveCatalog] = useState<CatalogKey>('campaigns');
+  const activeChannel: DispatchChannel = tab === 'whatsapp' ? 'whatsapp' : tab === 'html_email' ? 'html_email' : 'email';
+  const filters = filtersByChannel[activeChannel];
+  const deferredFiltersQ = useDeferredValue(filters.q);
+  const deferredBaseQuery = useDeferredValue(baseQuery);
 
   useEffect(() => {
     restoreSession();
   }, []);
 
   useEffect(() => {
+    if (!session?.refreshToken) return;
+    const expiresAtMs = Number(session.expiresAt || 0) * 1000;
+    const fallbackDelay = 45 * 60 * 1000;
+    const delay = expiresAtMs
+      ? Math.max(5_000, expiresAtMs - Date.now() - AUTH_REFRESH_MARGIN_MS)
+      : fallbackDelay;
+
+    const timeout = window.setTimeout(() => {
+      renewSession(session.refreshToken || '').catch(() => {
+        clearStoredSession();
+        setSession(null);
+        setAuthError('Sua sessão expirou. Entre novamente.');
+      });
+    }, Math.min(delay, 2_147_000_000));
+
+    return () => window.clearTimeout(timeout);
+  }, [session?.accessToken, session?.refreshToken, session?.expiresAt]);
+
+  useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
   useEffect(() => {
-    if (!savedMessage) return;
-    const timeout = window.setTimeout(() => setSavedMessage(''), 3200);
-    return () => window.clearTimeout(timeout);
-  }, [savedMessage]);
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    writeThemeCookie(theme);
+    try {
+      window.localStorage.removeItem(THEME_COOKIE_KEY);
+    } catch {
+      // Preferência antiga em localStorage é apenas compatibilidade; cookie é a fonte atual.
+    }
+  }, [theme]);
 
   useEffect(() => {
-    if (!modal && !calendarDeleteTarget) return;
+    if (!feedback) return;
+    const dismissAfter = feedback.type === 'error' ? 5000 : feedback.type === 'success' ? 3200 : 0;
+    if (!dismissAfter) return;
+    const timeout = window.setTimeout(() => setFeedback(null), dismissAfter);
+    return () => window.clearTimeout(timeout);
+  }, [feedback]);
+
+  useEffect(() => {
+    if (!modal && !calendarDeleteTarget && !dispatchDeleteTarget && !baseDeleteTarget && !pendingDiscardAction) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
-      if (calendarDeleteTarget) {
-        if (!calendarSyncing) setCalendarDeleteTarget(null);
+      if (pendingDiscardAction) {
+        continueEditing();
         return;
       }
-      closeModal();
+      if (calendarDeleteTarget) {
+        setCalendarDeleteTarget(null);
+        return;
+      }
+      if (dispatchDeleteTarget) {
+        setDispatchDeleteTarget(null);
+        return;
+      }
+      if (baseDeleteTarget) {
+        setBaseDeleteTarget(null);
+        return;
+      }
+      requestModalClose();
     }
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [modal, calendarDeleteTarget, calendarSyncing]);
+  }, [modal, calendarDeleteTarget, dispatchDeleteTarget, baseDeleteTarget, pendingDiscardAction, editingDispatch]);
+
+  const isDispatchDirty = modal === 'dispatch' && hasUnsavedDispatchChanges(editingDispatch, initialDispatchSnapshotRef.current);
 
   useEffect(() => {
-    if (!headerMenuOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Element | null;
-      if (!target?.closest('.headerMenu')) setHeaderMenuOpen(false);
+    if (!isDispatchDirty) return;
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = '';
     }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDispatchDirty]);
 
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setHeaderMenuOpen(false);
+  function showFeedback(type: FeedbackType, message: string) {
+    setFeedback(message ? { type, message } : null);
+  }
+
+  function setError(message: string) {
+    showFeedback('error', message);
+  }
+
+  function setSavedMessage(message: string) {
+    showFeedback('success', message);
+  }
+
+  function clearFeedback() {
+    setFeedback(null);
+  }
+
+  function toggleTheme() {
+    setTheme(current => current === 'dark' ? 'light' : 'dark');
+  }
+
+  function readLastResponsible(channel: DispatchChannel) {
+    try {
+      const data = JSON.parse(window.localStorage.getItem(LAST_RESPONSIBLE_STORAGE_KEY) || '{}');
+      return String(data?.[channel] || '');
+    } catch {
+      return '';
     }
+  }
 
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [headerMenuOpen]);
+  function rememberLastResponsible(channel: DispatchChannel, responsible: string) {
+    const clean = responsible.trim();
+    if (!clean) return;
+    try {
+      const data = JSON.parse(window.localStorage.getItem(LAST_RESPONSIBLE_STORAGE_KEY) || '{}');
+      window.localStorage.setItem(LAST_RESPONSIBLE_STORAGE_KEY, JSON.stringify({ ...data, [channel]: clean }));
+    } catch {
+      window.localStorage.setItem(LAST_RESPONSIBLE_STORAGE_KEY, JSON.stringify({ [channel]: clean }));
+    }
+  }
+
+  function clearStoredSession() {
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      storage.removeItem(AUTH_STORAGE_KEY);
+      storage.removeItem(AUTH_REFRESH_STORAGE_KEY);
+      storage.removeItem(AUTH_EXPIRES_STORAGE_KEY);
+    }
+  }
+
+  function authStorage(): Storage {
+    return window.localStorage.getItem(AUTH_STORAGE_KEY)
+      || window.localStorage.getItem(AUTH_REFRESH_STORAGE_KEY)
+      ? window.localStorage
+      : window.sessionStorage;
+  }
+
+  function persistSession(current: AuthSession, storage = authStorage()) {
+    storage.setItem(AUTH_STORAGE_KEY, current.accessToken);
+    if (current.refreshToken) storage.setItem(AUTH_REFRESH_STORAGE_KEY, current.refreshToken);
+    else storage.removeItem(AUTH_REFRESH_STORAGE_KEY);
+    if (current.expiresAt) storage.setItem(AUTH_EXPIRES_STORAGE_KEY, String(current.expiresAt));
+    else storage.removeItem(AUTH_EXPIRES_STORAGE_KEY);
+  }
+
+  async function renewSession(refreshToken = session?.refreshToken || '') {
+    if (!refreshToken) throw new Error('Sessão expirada. Entre novamente.');
+    const current = await refreshAuthSession(refreshToken);
+    persistSession(current);
+    setSession(current);
+    return current;
+  }
 
   async function restoreSession() {
-    const accessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || window.sessionStorage.getItem(AUTH_STORAGE_KEY);
-    if (!accessToken) {
+    const localAccessToken = window.localStorage.getItem(AUTH_STORAGE_KEY) || '';
+    const sessionAccessToken = window.sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+    const storage = localAccessToken ? window.localStorage : window.sessionStorage;
+    const accessToken = localAccessToken || sessionAccessToken;
+    const refreshToken = storage.getItem(AUTH_REFRESH_STORAGE_KEY) || '';
+    const expiresAt = Number(storage.getItem(AUTH_EXPIRES_STORAGE_KEY) || 0);
+
+    if (!accessToken && !refreshToken) {
       setAuthChecking(false);
       return;
     }
 
     try {
-      const current = await getCurrentUser(accessToken);
+      let current: AuthSession;
+      const tokenExpired = expiresAt > 0 && expiresAt * 1000 <= Date.now() + AUTH_REFRESH_MARGIN_MS;
+
+      if (refreshToken && (!accessToken || tokenExpired)) {
+        current = await refreshAuthSession(refreshToken);
+        persistSession(current, storage);
+      } else {
+        try {
+          const user = await getCurrentUser(accessToken);
+          current = { ...user, refreshToken, expiresAt };
+        } catch (error) {
+          if (!refreshToken) throw error;
+          current = await refreshAuthSession(refreshToken);
+          persistSession(current, storage);
+        }
+      }
+
       setSession(current);
-      await refreshState(accessToken);
+      await refreshState(current.accessToken);
     } catch {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      clearStoredSession();
       setSession(null);
     } finally {
       setAuthChecking(false);
@@ -204,10 +370,9 @@ export default function App() {
     setError('');
     try {
       const current = await signIn(email, password);
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      clearStoredSession();
       const storage = keepConnected ? window.localStorage : window.sessionStorage;
-      storage.setItem(AUTH_STORAGE_KEY, current.accessToken);
+      persistSession(current, storage);
       setSession(current);
       await refreshState(current.accessToken);
     } catch (err) {
@@ -216,10 +381,14 @@ export default function App() {
   }
 
   function logout() {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    requestDiscardOrRun(logoutCore);
+  }
+
+  function logoutCore() {
+    clearStoredSession();
     setSession(null);
     setAppState({ dispatches: [], bases: [], campaigns: [], audiences: [], responsibles: [] });
+    clearDispatchSnapshot();
     setSavedMessage('');
     setError('');
   }
@@ -245,9 +414,15 @@ export default function App() {
       return;
     }
 
-    setCalendarSyncing(true);
+    if (calendarOperationsRef.current.has(dispatch.id)) return;
+    const missing = missingReadyDispatchFields(dispatch);
+    if (missing.length) {
+      setError(`Não foi possível sincronizar com Google Calendar: informe ${missing.join(', ')}.`);
+      return;
+    }
+    calendarOperationsRef.current.add(dispatch.id);
+
     setError('');
-    setSavedMessage('');
     try {
       const result = await sendCalendarToN8n(dispatch.id, session.accessToken, 'upsert');
       const current = stateRef.current;
@@ -261,11 +436,12 @@ export default function App() {
       setViewingDispatch(item => item?.id === dispatch.id
         ? { ...item, googleCalendarEventId: result.eventId }
         : item);
-      setSavedMessage('Disparo sincronizado com o Google Calendar.');
+      setSavedMessage('Evento sincronizado com Google Calendar.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível enviar ao n8n.');
+      setSavedMessage('');
+      setError(err instanceof Error ? err.message : 'Não foi possível sincronizar com Google Calendar.');
     } finally {
-      setCalendarSyncing(false);
+      calendarOperationsRef.current.delete(dispatch.id);
     }
   }
 
@@ -274,35 +450,56 @@ export default function App() {
       setError('Faça login para remover o disparo do calendário.');
       return;
     }
-    setCalendarSyncing(true);
+    if (calendarOperationsRef.current.has(dispatch.id)) return;
+    calendarOperationsRef.current.add(dispatch.id);
+    const previousEventId = dispatch.googleCalendarEventId || '';
+
     setError('');
-    setSavedMessage('');
+    setCalendarDeleteTarget(null);
+    const current = stateRef.current;
+    setAppState({
+      ...current,
+      dispatches: current.dispatches.map(item => item.id === dispatch.id
+        ? { ...item, googleCalendarEventId: '' }
+        : item)
+    });
+    setViewingDispatch(item => item?.id === dispatch.id
+      ? { ...item, googleCalendarEventId: '' }
+      : item);
+    setSavedMessage('Disparo removido do Google Calendar pelo n8n.');
+
     try {
       const result = await sendCalendarToN8n(dispatch.id, session.accessToken, 'delete');
-      const current = stateRef.current;
+      const latest = stateRef.current;
       setAppState({
-        ...current,
+        ...latest,
         revision: result.revision,
-        dispatches: current.dispatches.map(item => item.id === dispatch.id
+        dispatches: latest.dispatches.map(item => item.id === dispatch.id
           ? { ...item, googleCalendarEventId: '' }
           : item)
       });
-      setViewingDispatch(item => item?.id === dispatch.id
-        ? { ...item, googleCalendarEventId: '' }
-        : item);
-      setCalendarDeleteTarget(null);
-      setSavedMessage('Disparo removido do Google Calendar pelo n8n.');
     } catch (err) {
+      const latest = stateRef.current;
+      setAppState({
+        ...latest,
+        dispatches: latest.dispatches.map(item => item.id === dispatch.id
+          ? { ...item, googleCalendarEventId: previousEventId }
+          : item)
+      });
+      setViewingDispatch(item => item?.id === dispatch.id
+        ? { ...item, googleCalendarEventId: previousEventId }
+        : item);
+      setSavedMessage('');
       setError(err instanceof Error ? err.message : 'Não foi possível enviar ao n8n.');
     } finally {
-      setCalendarSyncing(false);
+      calendarOperationsRef.current.delete(dispatch.id);
     }
   }
 
   async function persist(next: AppState, deletedCatalog?: { key: CatalogKey; value: string } | { key: CatalogKey; value: string }[]) {
     if (!session?.accessToken) {
       setError('Faça login para salvar alterações.');
-      return;
+      return false;
     }
     const accessToken = session.accessToken;
     const saveVersion = saveVersionRef.current + 1;
@@ -327,14 +524,16 @@ export default function App() {
       } catch (err) {
         if (saveVersion === saveVersionRef.current) setAppState(previous);
         setError(err instanceof Error ? err.message : 'Não foi possível salvar.');
+        return false;
       } finally {
         activeSavesRef.current -= 1;
         if (activeSavesRef.current === 0) setSaving(false);
       }
+      return true;
     };
 
     saveQueueRef.current = saveQueueRef.current.then(runSave, runSave);
-    await saveQueueRef.current;
+    return await saveQueueRef.current;
   }
 
   function setAppState(next: AppState) {
@@ -342,7 +541,6 @@ export default function App() {
     setState(next);
   }
 
-  const activeChannel: DispatchChannel = tab === 'whatsapp' ? 'whatsapp' : tab === 'html_email' ? 'html_email' : 'email';
   const channelLabel = channelName(activeChannel);
   const channelDispatches = useMemo(
     () => state.dispatches.filter(dispatch => (dispatch.channel || 'email') === activeChannel),
@@ -357,7 +555,7 @@ export default function App() {
       const text = `${dispatch.id} ${dispatch.baseId} ${dispatch.campaign} ${dispatch.audience} ${dispatch.description} ${dispatch.templateName} ${dispatch.subject} ${dispatch.body}`.toLowerCase();
       const base = baseById.get(dispatch.baseId);
       const validation = dispatchValidation(dispatch, state.bases);
-      if (filters.q && !text.includes(filters.q.toLowerCase())) return false;
+      if (deferredFiltersQ && !text.includes(deferredFiltersQ.toLowerCase())) return false;
       if (filters.start && dispatch.date < filters.start) return false;
       if (filters.end && dispatch.date > filters.end) return false;
       if (filters.campaign && dispatch.campaign !== filters.campaign) return false;
@@ -379,7 +577,7 @@ export default function App() {
       const comparison = dispatchSortValue(a, dispatchSortField).localeCompare(dispatchSortValue(b, dispatchSortField));
       return dispatchSortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [baseById, channelDispatches, dispatchSortDirection, dispatchSortField, filters, overlaps, state.bases]);
+  }, [baseById, channelDispatches, deferredFiltersQ, dispatchSortDirection, dispatchSortField, filters, overlaps, state.bases]);
 
   const metrics = useMemo(() => ({
     total: filteredDispatches.length,
@@ -401,25 +599,31 @@ export default function App() {
   }, [channelDispatches]);
 
   const incompleteItems = useMemo(() => {
-    const dispatches = channelDispatches
-      .filter(item => !item.responsible)
-      .map(item => `${fmtDate(item.date)} - disparo sem ${missingDispatchFields(item).join(', ')}`);
+    const dispatches = channelDispatches.flatMap(item => {
+      const missing = missingDispatchFields(item);
+
+      return missing.length > 0
+        ? [`${fmtDate(item.date)} - disparo sem ${missing.join(', ')}`]
+        : [];
+    });
+
     const bases = state.bases
       .filter(item => !item.responsible || !item.mainBase || !item.expectedAction)
       .map(item => `${item.mainBase || 'Regra de base'} - regra sem ${missingBaseFields(item).join(', ')}`);
+
     const duplicateWarnings = [...duplicateNames.entries()]
       .filter(([, items]) => items.length > 1)
       .map(([name, items]) => `Nome duplicado: ${name} (${items.length} disparos)`);
+
     return [...duplicateWarnings, ...dispatches, ...bases].slice(0, 8);
   }, [channelDispatches, duplicateNames, state.bases]);
-
   const campaigns = unique([...state.campaigns, ...state.dispatches.map(item => item.campaign), ...state.bases.map(item => item.campaign)]);
   const audiences = unique([...state.audiences, ...state.dispatches.map(item => item.audience)]);
   const responsibles = unique([...state.responsibles, ...state.dispatches.map(item => item.responsible), ...state.bases.map(item => item.responsible)]);
   const sessionResponsible = session ? responsibleForEmail(session.email) : '';
   const baseSuggestions = useMemo(() => unique(state.bases.flatMap(base => [base.campaign, base.mainBase, base.responsible])), [state.bases]);
   const filteredBases = useMemo(() => {
-    const query = baseQuery.trim().toLowerCase();
+    const query = deferredBaseQuery.trim().toLowerCase();
     const list = state.bases.filter(base => {
       if (!query) return true;
       return `${base.campaign} ${base.mainBase} ${base.expectedAction} ${base.responsible}`.toLowerCase().includes(query);
@@ -429,19 +633,8 @@ export default function App() {
       if (baseSort === 'date-asc') return (a.lastUpdated || '').localeCompare(b.lastUpdated || '');
       return `${a.mainBase} ${a.campaign}`.localeCompare(`${b.mainBase} ${b.campaign}`, 'pt-BR');
     });
-  }, [baseQuery, baseSort, state.bases]);
-  const calendarDispatches = useMemo(
-    () => state.dispatches
-      .filter(item => item.date.startsWith(calendarMonth))
-      .sort((a, b) => `${a.date} ${a.time || '00:00'}`.localeCompare(`${b.date} ${b.time || '00:00'}`)),
-    [calendarMonth, state.dispatches]
-  );
-  const viewingDayDispatches = useMemo(
-    () => state.dispatches
-      .filter(item => item.date === viewingDay)
-      .sort((a, b) => `${a.time || '00:00'} ${a.campaign}`.localeCompare(`${b.time || '00:00'} ${b.campaign}`)),
-    [state.dispatches, viewingDay]
-  );
+  }, [baseSort, deferredBaseQuery, state.bases]);
+  const { calendarMonth, setCalendarMonth, viewingDay, setViewingDay, calendarDispatches, viewingDayDispatches } = useCalendar(state.dispatches);
   const detailChannelDispatches = useMemo(
     () => viewingDispatch
       ? state.dispatches.filter(dispatch => (dispatch.channel || 'email') === (viewingDispatch.channel || 'email'))
@@ -452,19 +645,103 @@ export default function App() {
   const detailDuplicateNames = useMemo(() => duplicateDispatchNameMap(detailChannelDispatches), [detailChannelDispatches]);
 
   function updateFilter(key: FilterKey, value: string | boolean) {
-    setFilters(current => ({ ...current, [key]: value }));
+    setFiltersByChannel(current => ({
+      ...current,
+      [activeChannel]: { ...current[activeChannel], [key]: value }
+    }));
   }
 
   function setPeriod(days: number) {
     const start = todayISO();
-    setFilters(current => ({ ...current, start, end: addDaysISO(start, days) }));
+    setFiltersByChannel(current => ({
+      ...current,
+      [activeChannel]: { ...current[activeChannel], start, end: addDaysISO(start, days) }
+    }));
+  }
+
+  function clearCurrentFilters() {
+    setFiltersByChannel(current => ({ ...current, [activeChannel]: defaultFilters() }));
+  }
+
+  function setPeriodPreset(value: string) {
+    if (!value) {
+      updateFilter('start', '');
+      updateFilter('end', '');
+      return;
+    }
+    setPeriod(Number(value));
+  }
+
+  function navigate(nextTab: Tab) {
+    if (nextTab === tab) return;
+    const lockedDispatchChannel = modal === 'dispatchDetails'
+      ? viewingDispatch?.channel || 'email'
+      : modal === 'dispatch'
+        ? editingDispatch.channel || 'email'
+        : null;
+    if (
+      lockedDispatchChannel
+      && DISPATCH_TABS.includes(nextTab as DispatchChannel)
+      && nextTab !== lockedDispatchChannel
+    ) {
+      setError(`Não é possível trocar para ${channelName(nextTab as DispatchChannel)} enquanto este disparo de ${channelName(lockedDispatchChannel)} está aberto.`);
+      return;
+    }
+    requestDiscardOrRun(() => navigateCore(nextTab));
+  }
+
+  function navigateCore(nextTab: Tab) {
+    setTab(nextTab);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleSidebar() {
+    setSidebarOpen(current => !current);
   }
 
   function openDispatch(dispatch?: Dispatch) {
     const latest = dispatch
       ? stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch
       : null;
-    setEditingDispatch(latest ? { ...latest } : { ...emptyDispatch(activeChannel), responsible: sessionResponsible });
+    const rememberedResponsible = sessionResponsible ? '' : readLastResponsible(activeChannel);
+    const nextDispatch = latest
+      ? { ...latest }
+      : { ...emptyDispatch(activeChannel), responsible: sessionResponsible || rememberedResponsible };
+    setEditingDispatch(nextDispatch);
+    setEditingDispatchMode(latest ? 'edit' : 'create');
+    setDispatchSnapshot(nextDispatch);
+    setDispatchFieldErrors([]);
+    setSuggestedFields(!latest && rememberedResponsible ? ['responsavel'] : []);
+    setModal('dispatch');
+  }
+
+  function duplicateDispatch(dispatch: Dispatch) {
+    const latest = stateRef.current.dispatches.find(item => item.id === dispatch.id) || dispatch;
+    const now = new Date().toISOString();
+    const duplicate = duplicateDispatchDraft(latest, { id: uid('disparo'), now }) as Dispatch;
+    requestDiscardOrRun(() => {
+      setViewingDispatch(null);
+      setViewingDispatchFromCalendar(false);
+      setViewingDay('');
+      setEditingDispatch(duplicate);
+      setEditingDispatchMode('create');
+      setDispatchSnapshot(duplicate);
+      setDispatchFieldErrors([]);
+      setSuggestedFields([]);
+      setModal('dispatch');
+      setTab(duplicate.channel || 'email');
+    });
+  }
+
+  function openDispatchForDate(date: string) {
+    const rememberedResponsible = sessionResponsible ? '' : readLastResponsible('email');
+    const nextDispatch = { ...emptyDispatch('email'), date, responsible: sessionResponsible || rememberedResponsible };
+    setEditingDispatch(nextDispatch);
+    setEditingDispatchMode('create');
+    setDispatchSnapshot(nextDispatch);
+    setDispatchFieldErrors([]);
+    setSuggestedFields(rememberedResponsible ? ['responsavel'] : []);
     setModal('dispatch');
   }
 
@@ -498,15 +775,91 @@ export default function App() {
     setViewingDispatch(null);
     setViewingDispatchFromCalendar(false);
     setViewingDay('');
+    clearDispatchSnapshot();
+    setDispatchFieldErrors([]);
+    setSuggestedFields([]);
+    setPendingDiscardAction(null);
+  }
+
+  function requestModalClose() {
+    requestDiscardOrRun(closeModal);
+  }
+
+  function requestDiscardOrRun(run: () => void) {
+    if (isDispatchDirty) {
+      setPendingDiscardAction({ run });
+      return;
+    }
+    run();
+  }
+
+  function continueEditing() {
+    setPendingDiscardAction(null);
+  }
+
+  function discardChanges() {
+    const action = pendingDiscardAction;
+    setPendingDiscardAction(null);
+    if (action) action.run();
+  }
+
+  function setDispatchSnapshot(dispatch: Dispatch) {
+    initialDispatchRef.current = { ...dispatch, attachments: [...(dispatch.attachments || [])] };
+    initialDispatchSnapshotRef.current = dispatchSnapshot(dispatch);
+  }
+
+  function clearDispatchSnapshot() {
+    initialDispatchRef.current = null;
+    initialDispatchSnapshotRef.current = '';
+  }
+
+  function changeEditingDispatchChannel(channel: DispatchChannel) {
+    if (editingDispatch.channel === channel) return;
+    const run = () => {
+      const baseDispatch = initialDispatchRef.current || editingDispatch;
+      const rememberedResponsible = !sessionResponsible && !baseDispatch.responsible ? readLastResponsible(channel) : '';
+      const nextDispatch = {
+        ...baseDispatch,
+        channel,
+        responsible: sessionResponsible || baseDispatch.responsible || rememberedResponsible
+      };
+      setEditingDispatch(nextDispatch);
+      setDispatchFieldErrors([]);
+      setSuggestedFields(rememberedResponsible ? ['responsavel'] : []);
+    };
+    requestDiscardOrRun(run);
+  }
+
+  function applyDispatchSuggestions(draft: Dispatch) {
+    const { patch, suggestedFields: nextSuggestedFields } = suggestDispatchFields({
+      dispatches: state.dispatches,
+      bases: state.bases,
+      draft
+    });
+    setEditingDispatch({ ...draft, ...patch });
+    setSuggestedFields(nextSuggestedFields);
+  }
+
+  function updateEditingCampaign(campaign: string) {
+    applyDispatchSuggestions({ ...editingDispatch, campaign });
+  }
+
+  function updateEditingAudience(audience: string) {
+    applyDispatchSuggestions({ ...editingDispatch, audience });
+  }
+
+  function updateEditingBase(baseId: string) {
+    applyDispatchSuggestions({ ...editingDispatch, baseId });
   }
 
   async function submitDispatch(event: FormEvent) {
     event.preventDefault();
     const responsible = sessionResponsible || editingDispatch.responsible.trim();
     const draft = { ...editingDispatch, responsible };
-    const missing = missingDispatchFields(draft);
+    const missing = shouldValidateReadiness(draft.status) ? missingReadyDispatchFields(draft) : [];
     if (missing.length) {
-      setError(`Complete o disparo antes de salvar: ${missing.join(', ')}.`);
+      setDispatchFieldErrors(missing);
+      setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
       return;
     }
     const now = new Date().toISOString();
@@ -528,17 +881,23 @@ export default function App() {
       createdAt: editingDispatch.createdAt || now,
       updatedAt: now
     };
-    const next = editingDispatch.id
+    const wasEditing = editingDispatchMode === 'edit';
+    const next = wasEditing
       ? state.dispatches.map(dispatch => dispatch.id === item.id ? item : dispatch)
       : [...state.dispatches, item];
-    closeModal();
-    await persist({
+    const saved = await persist({
       ...state,
       dispatches: next,
       campaigns: unique([...state.campaigns, item.campaign]),
       audiences: unique([...state.audiences, item.audience]),
       responsibles: unique([...state.responsibles, item.responsible])
     });
+    if (!saved) return;
+    rememberLastResponsible(item.channel, item.responsible);
+    setDispatchSnapshot(item);
+    setDispatchFieldErrors([]);
+    setSavedMessage(dispatchSavedFeedback(item.status, wasEditing));
+    closeModal();
   }
 
   async function submitBase(event: FormEvent) {
@@ -563,21 +922,60 @@ export default function App() {
     const next = editingBase.id
       ? state.bases.map(base => base.id === item.id ? item : base)
       : [...state.bases, item];
-    closeModal();
-    await persist({
+    const wasEditing = Boolean(editingBase.id);
+    const saved = await persist({
       ...state,
       bases: next,
       campaigns: unique([...state.campaigns, item.campaign]),
       responsibles: unique([...state.responsibles, item.responsible])
     });
+    if (!saved) return;
+    setSavedMessage(wasEditing ? 'Base atualizada.' : 'Cadastro criado.');
+    closeModal();
   }
 
   async function changeStatus(id: string, status: DispatchStatus) {
     const current = stateRef.current;
+    const target = current.dispatches.find(dispatch => dispatch.id === id);
+    if (target && shouldValidateReadiness(status)) {
+      const missing = missingReadyDispatchFields({ ...target, status });
+      if (missing.length) {
+        setError(`Não foi possível marcar como pronto: informe ${missing.join(', ')}.`);
+        return;
+      }
+    }
     const next = current.dispatches.map(dispatch =>
       dispatch.id === id ? { ...dispatch, status, updatedAt: new Date().toISOString() } : dispatch
     );
-    await persist({ ...current, dispatches: next });
+    const saved = await persist({ ...current, dispatches: next });
+    if (saved) setSavedMessage(statusFeedback(status));
+  }
+
+  function setEditingDispatchStatus(status: DispatchStatus) {
+    clearFeedback();
+    if (shouldValidateReadiness(status)) {
+      const responsible = sessionResponsible || editingDispatch.responsible.trim();
+      const missing = missingReadyDispatchFields({ ...editingDispatch, responsible, status });
+      if (missing.length) {
+        setDispatchFieldErrors(missing);
+        setError(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+        return;
+      }
+    }
+    setDispatchFieldErrors([]);
+    setEditingDispatch({ ...editingDispatch, status });
+  }
+
+  function dispatchSavedFeedback(status: DispatchStatus, wasEditing: boolean) {
+    if (status === 'Pronto para disparo') return 'Disparo marcado como pronto.';
+    if (status === 'Planejado' || status === 'Em produção') return wasEditing ? 'Disparo atualizado.' : 'Rascunho salvo.';
+    return wasEditing ? 'Disparo atualizado.' : 'Disparo salvo.';
+  }
+
+  function statusFeedback(status: DispatchStatus) {
+    if (status === 'Pronto para disparo') return 'Disparo marcado como pronto.';
+    if (status === 'Enviado') return 'Disparo marcado como enviado.';
+    return 'Disparo atualizado.';
   }
 
   async function deleteDispatches(ids: string[]) {
@@ -586,20 +984,36 @@ export default function App() {
     await persist({ ...state, dispatches: state.dispatches.filter(item => !selected.has(item.id)) });
   }
 
+  async function confirmDeleteDispatch() {
+    if (!dispatchDeleteTarget) return;
+    const deleted = await persist({ ...state, dispatches: state.dispatches.filter(item => item.id !== dispatchDeleteTarget.id) });
+    if (!deleted) return;
+    setDispatchDeleteTarget(null);
+    if (viewingDispatch?.id === dispatchDeleteTarget.id) closeModal();
+  }
+
+  function requestDeleteBase(id: string) {
+    const target = state.bases.find(item => item.id === id);
+    if (target) setBaseDeleteTarget(target);
+  }
+
   async function deleteBase(id: string) {
-    if (!confirm('Excluir esta regra de base? Os disparos vinculados ficarão sem base.')) return;
-    await persist({
+    const saved = await persist({
       ...state,
       bases: state.bases.filter(item => item.id !== id),
       dispatches: state.dispatches.map(item => item.baseId === id ? { ...item, baseId: '' } : item)
     });
+    if (!saved) return;
+    setBaseDeleteTarget(null);
+    setSavedMessage('Regra de base removida.');
   }
 
   async function addCatalogItem(key: CatalogKey, value: string) {
     const clean = value.trim();
     if (!clean) return;
     if (state[key].some(item => item.toLowerCase() === clean.toLowerCase())) return;
-    await persist({ ...state, [key]: unique([...state[key], clean]) });
+    const saved = await persist({ ...state, [key]: unique([...state[key], clean]) });
+    if (saved) setSavedMessage('Cadastro criado.');
   }
 
   async function updateCatalogItem(key: CatalogKey, oldValue: string, newValue: string) {
@@ -618,7 +1032,8 @@ export default function App() {
       nextState.dispatches = state.dispatches.map(item => item.responsible === oldValue ? { ...item, responsible: clean } : item);
       nextState.bases = state.bases.map(item => item.responsible === oldValue ? { ...item, responsible: clean } : item);
     }
-    await persist(nextState, { key, value: oldValue });
+    const saved = await persist(nextState, { key, value: oldValue });
+    if (saved) setSavedMessage('Cadastro atualizado.');
   }
 
   async function removeCatalogItems(key: CatalogKey, values: string[]) {
@@ -637,7 +1052,8 @@ export default function App() {
       nextState.dispatches = state.dispatches.map(item => selectedSet.has(item.responsible) ? { ...item, responsible: '' } : item);
       nextState.bases = state.bases.map(item => selectedSet.has(item.responsible) ? { ...item, responsible: '' } : item);
     }
-    await persist(nextState, selected.map(value => ({ key, value })));
+    const saved = await persist(nextState, selected.map(value => ({ key, value })));
+    if (saved) setSavedMessage('Cadastro removido.');
   }
 
   if (authChecking) {
@@ -652,19 +1068,163 @@ export default function App() {
   }
 
   if (!session) {
-    return <LoginScreen error={authError} onLogin={login} />;
+    return <Login error={authError} onLogin={login} />;
   }
 
+  const pageTitle = tab === 'calendar'
+    ? 'Calendário'
+    : tab === 'bases'
+      ? 'Regras de bases'
+      : tab === 'catalogs'
+        ? 'Cadastros'
+        : tab === 'overview'
+          ? 'Visão geral'
+        : `Disparos de ${channelName(activeChannel)}`;
+  const userInitials = (session.name || session.email)
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('');
+  const dispatchCounts = {
+    email: state.dispatches.filter(item => (item.channel || 'email') === 'email').length,
+    whatsapp: state.dispatches.filter(item => item.channel === 'whatsapp').length,
+    html_email: state.dispatches.filter(item => item.channel === 'html_email').length
+  };
+  const attentionCount = state.dispatches
+    .filter(dispatch => dispatchValidation(dispatch, state.bases).level !== 'green')
+    .length;
+  const pageEyebrow = tab === 'calendar'
+    ? 'ORGANIZAÇÃO & AGENDA'
+    : tab === 'bases'
+      ? 'GESTÃO DE DADOS'
+      : tab === 'catalogs'
+        ? 'CONFIGURAÇÕES'
+        : tab === 'overview'
+          ? 'MARKETING & RELACIONAMENTO'
+          : 'CANAIS DE DISPARO';
+  const readinessChecks = dispatchReadinessChecks({
+    ...editingDispatch,
+    responsible: sessionResponsible || editingDispatch.responsible
+  });
+  const readinessCompleted = readinessChecks.filter(item => item.done).length;
+  const currentMissingReadyFields = missingReadyDispatchFields({
+    ...editingDispatch,
+    responsible: sessionResponsible || editingDispatch.responsible
+  });
+  const dispatchFieldErrorSet = new Set(dispatchFieldErrors.filter(field => currentMissingReadyFields.includes(field)));
+  const fieldError = (field: string, message: string) =>
+    dispatchFieldErrorSet.has(field) ? <small className="fieldError">{message}</small> : null;
+  const suggestionHint = (field: string, message: string) =>
+    suggestedFields.includes(field) ? <small className="fieldHint">{message}</small> : null;
+  const activeFilterChips = [
+    filters.q ? { key: 'q' as FilterKey, label: `Busca: ${filters.q}`, value: '' } : null,
+    filters.campaign ? { key: 'campaign' as FilterKey, label: `Campanha: ${filters.campaign}`, value: '' } : null,
+    filters.audience ? { key: 'audience' as FilterKey, label: `Público: ${filters.audience}`, value: '' } : null,
+    filters.status ? { key: 'status' as FilterKey, label: `Status: ${filters.status}`, value: '' } : null,
+    filters.base ? { key: 'base' as FilterKey, label: `Base: ${state.bases.find(base => base.id === filters.base)?.mainBase || filters.base}`, value: '' } : null,
+    filters.responsible ? { key: 'responsible' as FilterKey, label: `Responsável: ${filters.responsible}`, value: '' } : null,
+    filters.validation ? { key: 'validation' as FilterKey, label: `Validação: ${filters.validation}`, value: '' } : null,
+    filters.start ? { key: 'start' as FilterKey, label: `Data inicial: ${fmtDate(filters.start)}`, value: '' } : null,
+    filters.end ? { key: 'end' as FilterKey, label: `Data final: ${fmtDate(filters.end)}`, value: '' } : null,
+    filters.pending ? { key: 'pending' as FilterKey, label: 'Pendentes', value: false } : null,
+    filters.sent ? { key: 'sent' as FilterKey, label: 'Enviados', value: false } : null,
+    filters.alert ? { key: 'alert' as FilterKey, label: 'Com alerta', value: false } : null,
+    filters.overlap ? { key: 'overlap' as FilterKey, label: 'Com sobreposição', value: false } : null,
+    filters.missingBase ? { key: 'missingBase' as FilterKey, label: 'Sem base', value: false } : null,
+    filters.staleBase ? { key: 'staleBase' as FilterKey, label: 'Base desatualizada', value: false } : null,
+    filters.readyOnly ? { key: 'readyOnly' as FilterKey, label: 'Pronto/enviado', value: false } : null
+  ].filter(Boolean) as Array<{ key: FilterKey; label: string; value: string | boolean }>;
+
   return (
-    <main className="app">
-      <header className="header">
-        <div>
-          <img className="brandLogo" src="/unigran-logo.png" alt="UNIGRAN" />
-          <h1>Planejamento de Disparos</h1>
-          <p>Controle de campanhas, públicos, bases de exclusão e validações antes do envio.</p>
-          <span className="sessionBadge">{session.email}</span>
+    <div className="appShell">
+      {sidebarOpen && <button className="sidebarScrim" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)} />}
+      <aside id="main-sidebar" className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+        <div className="sidebarBrand">
+          <img className="sidebarBrandLogo" src="/unigran-logo.png" alt="UNIGRAN" />
+          <p className="sidebarBrandSubtitle">Planejamento de Disparos</p>
         </div>
-        <div className="headerActions">
+        <nav className="sidebarNav" aria-label="Navegação principal">
+          <span className="sidebarNavLabel">Principal</span>
+          <button aria-pressed={tab === 'overview'} className={tab === 'overview' ? 'active' : ''} onClick={() => navigate('overview')}>
+            <span aria-hidden="true"><RefIcon name="dashboard" /></span>
+            <em>Visão geral</em>
+            {attentionCount > 0 && <b>{attentionCount} pendente{attentionCount > 1 ? 's' : ''}</b>}
+          </button>
+          <span className="sidebarNavLabel withSpark">Canais de Disparo <RefIcon name="sparkles" /></span>
+          <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}>
+            <span aria-hidden="true" className="accentEmail"><RefIcon name="mail" /></span>
+            <em>E-mail</em>
+            <b className="channelCount email">{dispatchCounts.email}</b>
+          </button>
+          <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}>
+            <span aria-hidden="true" className="accentWhatsapp"><RefIcon name="message" /></span>
+            <em>WhatsApp</em>
+            <b className="channelCount whatsapp">{dispatchCounts.whatsapp}</b>
+          </button>
+          <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}>
+            <span aria-hidden="true" className="accentHtml"><RefIcon name="code" /></span>
+            <em>E-mail HTML</em>
+            <b className="channelCount html_email">{dispatchCounts.html_email}</b>
+          </button>
+          <span className="sidebarNavLabel">Gestão & Organização</span>
+          <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => navigate('calendar')}>
+            <span aria-hidden="true"><RefIcon name="calendar" /></span>
+            <em>Calendário Mensal</em>
+            <RefIcon name="chevron" />
+          </button>
+          <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => navigate('bases')}>
+            <span aria-hidden="true"><RefIcon name="database" /></span>
+            <em>Regras de Bases</em>
+            <RefIcon name="chevron" />
+          </button>
+          <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => navigate('catalogs')}>
+            <span aria-hidden="true"><RefIcon name="folder" /></span>
+            <em>Cadastros Gerais</em>
+            <RefIcon name="chevron" />
+          </button>
+        </nav>
+        <div className="sidebarUser">
+          <div className="sidebarUserCard">
+            <div className="sidebarAvatarWrap">
+              <span className="sidebarAvatar">{userInitials || 'U'}</span>
+              <span className="sidebarOnlineDot" aria-hidden="true" />
+            </div>
+            <div className="sidebarUserMeta">
+              <strong>
+                <span>{session.name || 'Usuário'}</span>
+                <RefIcon name="shield" />
+              </strong>
+              <span title={session.email}>{session.email}</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="mainWorkspace">
+        <header className="topbar">
+          <div className="topbarTitle">
+            <button
+              className="mobileMenu"
+              type="button"
+              aria-label={sidebarOpen ? 'Fechar menu' : 'Abrir menu'}
+              aria-expanded={sidebarOpen}
+              aria-controls="main-sidebar"
+              onClick={toggleSidebar}
+            ><RefIcon name="menu" /></button>
+            <div>
+            <p>{pageEyebrow}</p>
+            <h1>{pageTitle}</h1>
+            </div>
+          </div>
+          <div className="topbarActions">
+            {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
+              <button className="btn primary topbarNew" onClick={() => openDispatch()}><RefIcon name="plus" /> Novo disparo</button>
+            )}
+            <button type="button" className="topbarThemeButton" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}>
+              {theme === 'dark' ? <RefIcon name="sun" /> : <RefIcon name="moon" />}
+              <span>{theme === 'dark' ? 'Claro' : 'Escuro'}</span>
+            </button>
           <details className="headerMenu" open={headerMenuOpen}>
             <summary
               aria-label="Abrir ações rápidas"
@@ -673,81 +1233,107 @@ export default function App() {
                 setHeaderMenuOpen(current => !current);
               }}
             >
-              •••
+              <RefIcon name="more" />
             </summary>
             <div className="headerMenuPanel">
+              <div className="themeMenuRow">
+                <span>{theme === 'dark' ? <><RefIcon name="moon" /> Escuro</> : <><RefIcon name="sun" /> Claro</>}</span>
+                <button
+                  type="button"
+                  className={`themeSwitch ${theme === 'dark' ? 'active' : ''}`}
+                  role="switch"
+                  aria-checked={theme === 'dark'}
+                  aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
+                  onClick={toggleTheme}
+                >
+                  <span />
+                </button>
+              </div>
               <button type="button" className="menuRefresh" onClick={() => {
                 setHeaderMenuOpen(false);
-                refreshState();
-              }} disabled={loading || saving}>{loading ? 'Recarregando...' : 'Recarregar'}</button>
-              <a className="menuFormatter" href="https://formatador-rd.vercel.app/" target="_blank" rel="noreferrer" onClick={() => setHeaderMenuOpen(false)}>Unigran Formater</a>
+                requestDiscardOrRun(() => {
+                  closeModal();
+                  refreshState();
+                });
+              }} disabled={loading || saving}><RefIcon name="refresh" /> {loading ? 'Recarregando...' : 'Recarregar'}</button>
+              <a className="menuFormatter" href="https://formatador-rd.vercel.app/" target="_blank" rel="noreferrer" onClick={() => setHeaderMenuOpen(false)}><RefIcon name="external" /> Unigran Formater</a>
               <button type="button" className="menuLogout" onClick={() => {
                 setHeaderMenuOpen(false);
                 logout();
-              }}>Sair</button>
+              }}><RefIcon name="logout" /> Sair</button>
             </div>
           </details>
-        </div>
-      </header>
+          </div>
+        </header>
 
-      {error && <div className="error">{error}</div>}
-      {savedMessage && !error && <div className="success">{savedMessage}</div>}
+        <div className="app">
 
-      <nav className="tabs" aria-label="Navegação principal">
-        <button aria-pressed={tab === 'email'} className={tab === 'email' ? 'active' : ''} onClick={() => setTab('email')}>Disparos de e-mail</button>
-        <button aria-pressed={tab === 'whatsapp'} className={tab === 'whatsapp' ? 'active' : ''} onClick={() => setTab('whatsapp')}>Disparos de WhatsApp</button>
-        <button aria-pressed={tab === 'html_email'} className={tab === 'html_email' ? 'active' : ''} onClick={() => setTab('html_email')}>E-mail HTML</button>
-        <button aria-pressed={tab === 'calendar'} className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>Calendário</button>
-        <button aria-pressed={tab === 'bases'} className={tab === 'bases' ? 'active' : ''} onClick={() => setTab('bases')}>Regras de bases</button>
-        <button aria-pressed={tab === 'catalogs'} className={tab === 'catalogs' ? 'active' : ''} onClick={() => setTab('catalogs')}>Cadastros</button>
-      </nav>
+      {feedback && <div className={`feedback ${feedback.type}`} role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.message}</div>}
+
+      {tab === 'overview' && (
+        <OverviewDashboard
+          dispatches={state.dispatches}
+          bases={state.bases}
+          userName={(session.name || session.email.split('@')[0]).split(' ')[0]}
+          onNavigate={navigate}
+          onNew={() => openDispatch()}
+          onView={openDispatchDetails}
+        />
+      )}
 
       {(tab === 'email' || tab === 'whatsapp' || tab === 'html_email') && (
-        <>
-          <section className="summary">
-            <Metric label="Total de disparos" value={metrics.total} />
-            <Metric label="Planejados" value={metrics.planned} />
-            <Metric label="Enviados" value={metrics.sent} />
-            <Metric label="Pendentes" value={metrics.pending} />
-            <Metric label="Com sobreposição" value={metrics.overlap} tone="warning" />
-            <Metric label="Sem base" value={metrics.missingBase} tone="risk" />
-            <Metric label="Prontos" value={metrics.ready} />
-          </section>
-
-          <section className="dailyPanel">
-            <div>
-              <div className="panelHead compact">
-                <div>
-                  <h2>Próximos disparos</h2>
-                  <p>Agenda dos próximos 15 dias de {channelLabel}</p>
-                </div>
+        <section className={`channelView channelView-${activeChannel}`}>
+          <div className="channelHeroCard">
+            <div className="channelHeroCopy">
+              <div className="channelHeroMeta">
+                <span className={`channelHeroBadge ${activeChannel}`}>{channelLabel}</span>
+                <span>Gestão e Validação</span>
               </div>
-              <UpcomingList dispatches={upcomingDispatches} bases={state.bases} />
+              <h2>Disparos Programados de {channelLabel}</h2>
+              <p>Acompanhe, altere status e verifique a prontidão dos disparos desta modalidade.</p>
             </div>
-            <div>
-              <div className="panelHead compact">
-                <div>
-                  <h2>Pendências de cadastro</h2>
-                  <p>Campos incompletos que podem travar o fluxo</p>
-                </div>
-              </div>
-              <IssueList items={incompleteItems} />
-            </div>
-          </section>
+            <button className="btn primary channelNewDispatch" onClick={() => openDispatch()}><RefIcon name="plus" /> Novo Disparo</button>
+          </div>
 
-          <section className="panel">
+          <div className="channelQuickStats" aria-label="Resumo do canal">
+            <span><strong>{metrics.total}</strong> total</span>
+            <span className="ready"><strong>{metrics.ready}</strong> prontos</span>
+            <span className="pending"><strong>{metrics.pending}</strong> pendências</span>
+            <span className="sent"><strong>{metrics.sent}</strong> enviados</span>
+          </div>
+
+          <div className="channelSegmented" aria-label="Canal de disparo">
+            <button className={tab === 'email' ? 'active' : ''} onClick={() => navigate('email')}>E-mail <span>{state.dispatches.filter(item => (item.channel || 'email') === 'email').length}</span></button>
+            <button className={tab === 'whatsapp' ? 'active' : ''} onClick={() => navigate('whatsapp')}>WhatsApp <span>{state.dispatches.filter(item => item.channel === 'whatsapp').length}</span></button>
+            <button className={tab === 'html_email' ? 'active' : ''} onClick={() => navigate('html_email')}>HTML <span>{state.dispatches.filter(item => item.channel === 'html_email').length}</span></button>
+          </div>
+
+          <section className="panel channelTablePanel">
             <div className="filterToolbar">
-              <button className="btn primary newDispatchButton" onClick={() => openDispatch()}>Novo disparo</button>
-              <button className="btn ghost small" onClick={() => setPeriod(7)}>Próximos 7 dias</button>
-              <button className="btn ghost small" onClick={() => setPeriod(15)}>Próximos 15 dias</button>
-              <button className="btn ghost small" onClick={() => setPeriod(30)}>Próximos 30 dias</button>
-              <button className="btn ghost small" onClick={() => setFilters(defaultFilters())}>Limpar filtros</button>
+              <input className="quickSearch" placeholder="Buscar campanha, template, público..." value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
+              <select className="quickFilter" value="" onChange={event => setPeriodPreset(event.target.value)}>
+                <option value="">Período</option>
+                <option value="7">Próximos 7 dias</option>
+                <option value="15">Próximos 15 dias</option>
+                <option value="30">Próximos 30 dias</option>
+              </select>
+              <Select value={filters.status} values={STATUS} placeholder="Status" onChange={value => updateFilter('status', value)} />
+              <button className="btn ghost small" aria-expanded={filtersExpanded} onClick={() => setFiltersExpanded(current => !current)}>☷ Filtros</button>
+              <button className="btn ghost small" onClick={clearCurrentFilters}>Limpar</button>
             </div>
-            <div className="filterBoard">
+            {activeFilterChips.length > 0 && (
+              <div className="activeFilterChips" aria-label="Filtros ativos">
+                {activeFilterChips.map(chip => (
+                  <button type="button" key={`${chip.key}-${chip.label}`} onClick={() => updateFilter(chip.key, chip.value)}>
+                    {chip.label} <span aria-hidden="true">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className={`filterBoard ${filtersExpanded ? 'expanded' : ''}`}>
               <div className="filterGroup searchGroup">
-                <span>Busca e período</span>
+                <span>Período avançado</span>
                 <div className="filterRow dateRow">
-                  <input placeholder="Buscar por ID, campanha, template ou assunto" value={filters.q} onChange={event => updateFilter('q', event.target.value)} />
                   <input type="date" value={filters.start} onChange={event => updateFilter('start', event.target.value)} />
                   <input type="date" value={filters.end} onChange={event => updateFilter('end', event.target.value)} />
                 </div>
@@ -757,7 +1343,6 @@ export default function App() {
                 <div className="filterRow selectRow">
                   <Select value={filters.campaign} values={campaigns} placeholder="Campanha" onChange={value => updateFilter('campaign', value)} />
                   <Select value={filters.audience} values={audiences} placeholder="Público" onChange={value => updateFilter('audience', value)} />
-                  <Select value={filters.status} values={STATUS} placeholder="Status" onChange={value => updateFilter('status', value)} />
                   <Select value={filters.base} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Base" onChange={value => updateFilter('base', value)} />
                   <Select value={filters.responsible} values={responsibles} placeholder="Responsável" onChange={value => updateFilter('responsible', value)} />
                   <Select value={filters.validation} values={['green', 'yellow', 'red']} labels={new Map([['green', 'Base validada'], ['yellow', 'Conferir base'], ['red', 'Risco de envio']])} placeholder="Validação" onChange={value => updateFilter('validation', value)} />
@@ -794,44 +1379,82 @@ export default function App() {
               duplicateNames={duplicateNames}
               onView={openDispatchDetails}
               onEdit={openDispatch}
+              onDuplicate={duplicateDispatch}
+              onSyncCalendar={sendDispatchToCalendar}
+              onRemoveCalendar={dispatch => setCalendarDeleteTarget(dispatch)}
               onDelete={deleteDispatches}
               onStatus={changeStatus}
             />
           </section>
-        </>
+
+          <details className="channelOperationalDetails">
+            <summary>Visão operacional complementar</summary>
+            <section className="summary">
+              <Metric label="Total de disparos" value={metrics.total} />
+              <Metric label="Planejados" value={metrics.planned} />
+              <Metric label="Enviados" value={metrics.sent} />
+              <Metric label="Pendentes" value={metrics.pending} />
+              <Metric label="Com sobreposição" value={metrics.overlap} tone="warning" />
+              <Metric label="Sem base" value={metrics.missingBase} tone="risk" />
+              <Metric label="Prontos" value={metrics.ready} />
+            </section>
+            <section className="dailyPanel">
+              <div>
+                <div className="panelHead compact"><div><h2>Próximos disparos</h2><p>Agenda dos próximos 15 dias de {channelLabel}</p></div></div>
+                <UpcomingList dispatches={upcomingDispatches} bases={state.bases} />
+              </div>
+              <div>
+                <div className="panelHead compact"><div><h2>Pendências de cadastro</h2><p>Campos incompletos que podem travar o fluxo</p></div></div>
+                <IssueList items={incompleteItems} />
+              </div>
+            </section>
+          </details>
+        </section>
       )}
 
       {tab === 'calendar' && (
-        <section className="panel calendarPanel">
-          <div className="panelHead">
+        <section className="calendarView">
+          <div className="calendarHeaderCard">
             <div>
-              <h2>Calendário de disparos</h2>
-              <p>E-mail, WhatsApp e HTML no mesmo mês</p>
+              <div className="calendarHeaderMeta"><span>Agenda Multi-canal</span><em>Visualização Unificada</em></div>
+              <h2>{monthLabel(calendarMonth)}</h2>
+              <p>Acompanhe a distribuição temporal dos disparos de e-mail, WhatsApp e HTML em uma única grade.</p>
             </div>
-            <div className="calendarActions">
-              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>Mês anterior</button>
-              <strong>{monthLabel(calendarMonth)}</strong>
-              <button className="btn ghost small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
-              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo mês</button>
+            <div className="calendarNavGroup">
+              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, -1))}>‹ Anterior</button>
+              <button className="btn calendarToday small" onClick={() => setCalendarMonth(todayISO().slice(0, 7))}>Hoje</button>
+              <button className="btn ghost small" onClick={() => setCalendarMonth(shiftMonth(calendarMonth, 1))}>Próximo ›</button>
             </div>
           </div>
-          <CalendarView
-            month={calendarMonth}
-            dispatches={calendarDispatches}
-            onView={dispatch => openDispatchDetails(dispatch, true)}
-            onDayView={openCalendarDay}
-          />
+          <div className="calendarMainCard">
+            <div className="calendarLegendBar">
+              <div className="calendarLegend" aria-label="Legenda das modalidades">
+                <span><i className="email" />E-mail</span>
+                <span><i className="whatsapp" />WhatsApp</span>
+                <span><i className="html_email" />E-mail HTML</span>
+              </div>
+              <small>Clique em qualquer data para abrir a lista detalhada do dia</small>
+            </div>
+            <CalendarView
+              month={calendarMonth}
+              dispatches={calendarDispatches}
+              onView={dispatch => openDispatchDetails(dispatch, true)}
+              onDayView={openCalendarDay}
+              onCreate={openDispatchForDate}
+            />
+          </div>
         </section>
       )}
 
       {tab === 'bases' && (
-        <section className="panel">
-          <div className="panelHead">
+        <section className="panel baseRulesPanel">
+          <div className="panelHead baseRulesHead">
             <div>
-              <h2>Regras de bases</h2>
-              <p>{filteredBases.length} de {state.bases.length} regra(s)</p>
+              <div className="baseRulesMeta"><span>Governança de Dados</span><em>Bases & Segmentações</em></div>
+              <h2>Regras de Bases por Campanha</h2>
+              <p>Defina quais bases de dados devem ser utilizadas, exclusões obrigatórias e ações prévias de atualização.</p>
             </div>
-            <button className="btn primary" onClick={() => openBase()}>Nova regra</button>
+            <button className="btn primary" onClick={() => openBase()}><RefIcon name="plus" /> Nova Regra</button>
           </div>
           <div className="listControls">
             <input
@@ -849,17 +1472,22 @@ export default function App() {
               <option value="date-asc">Data mais antiga</option>
             </select>
           </div>
-          <BaseTable bases={filteredBases} onEdit={openBase} onDelete={deleteBase} />
+          <BaseTable bases={filteredBases} onEdit={openBase} onDelete={requestDeleteBase} />
         </section>
       )}
 
       {tab === 'catalogs' && (
-        <section className="panel">
+        <section className={`panel catalogPanel activeCatalog-${activeCatalog}`}>
           <div className="panelHead">
             <div>
               <h2>Cadastros</h2>
               <p>Listas usadas nos selects de novo disparo e regras de bases</p>
             </div>
+          </div>
+          <div className="catalogTabs" role="tablist" aria-label="Tipos de cadastro">
+            <button type="button" role="tab" aria-selected={activeCatalog === 'campaigns'} className={activeCatalog === 'campaigns' ? 'active' : ''} onClick={() => setActiveCatalog('campaigns')}>Campanhas</button>
+            <button type="button" role="tab" aria-selected={activeCatalog === 'audiences'} className={activeCatalog === 'audiences' ? 'active' : ''} onClick={() => setActiveCatalog('audiences')}>Públicos</button>
+            <button type="button" role="tab" aria-selected={activeCatalog === 'responsibles'} className={activeCatalog === 'responsibles' ? 'active' : ''} onClick={() => setActiveCatalog('responsibles')}>Responsáveis</button>
           </div>
           <div className="catalogGrid">
             <CatalogManager
@@ -880,29 +1508,49 @@ export default function App() {
               onUpdate={(oldValue, newValue) => updateCatalogItem('audiences', oldValue, newValue)}
               onRemove={values => removeCatalogItems('audiences', values)}
             />
+            <CatalogManager
+              title="Responsáveis"
+              description="Pessoas disponíveis nos formulários."
+              values={responsibles}
+              dates={state.catalogDates?.responsibles || {}}
+              onAdd={value => addCatalogItem('responsibles', value)}
+              onUpdate={(oldValue, newValue) => updateCatalogItem('responsibles', oldValue, newValue)}
+              onRemove={values => removeCatalogItems('responsibles', values)}
+            />
           </div>
         </section>
       )}
 
       {modal === 'dispatch' && (
-        <div className="modalBackdrop" onMouseDown={closeModal}>
-          <form className="modal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={editingDispatch.id ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={closeModal} />
-            <div className="modalGrid">
+        <div className="modalBackdrop" onMouseDown={requestModalClose}>
+          <form className="modal dispatchFormModal" onSubmit={submitDispatch} onMouseDown={event => event.stopPropagation()}>
+            <ModalHead eyebrow="PLANEJAMENTO" title={editingDispatchMode === 'edit' ? `Editar disparo de ${channelLabel}` : `Novo disparo de ${channelLabel}`} onClose={requestModalClose} />
+            <div className="dispatchFormLayout">
+            <div className="dispatchFormContent">
+            <div className="formSectionTitle modalityTitle">Modalidade</div>
+            <div className="channelSelector">
+              <button type="button" className={editingDispatch.channel === 'email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('email')}>✉ E-mail</button>
+              <button type="button" className={editingDispatch.channel === 'whatsapp' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('whatsapp')}>◉ WhatsApp</button>
+              <button type="button" className={editingDispatch.channel === 'html_email' ? 'active' : ''} onClick={() => changeEditingDispatchChannel('html_email')}>◇ E-mail HTML</button>
+            </div>
+            <section className="formSection">
+              <div className="formSectionTitle">1. Planejamento & Cronograma</div>
+              <div className="modalGrid dispatchPlanningGrid">
               <Field label="Data de disparo">
                 <BrazilianDatePicker
-                  required
                   value={editingDispatch.date}
                   onChange={value => setEditingDispatch({ ...editingDispatch, date: value })}
                 />
+                {fieldError('data', 'Informe a data antes de marcar como pronto.')}
               </Field>
               <Field label="Hora do disparo">
                 <TwentyFourHourPicker
                   value={editingDispatch.time}
                   onChange={value => setEditingDispatch({ ...editingDispatch, time: value })}
                 />
+                {fieldError('horario', 'Informe o horário antes de marcar como pronto.')}
               </Field>
-              <Field label="Nome do template"><input value={editingDispatch.templateName} onChange={event => setEditingDispatch({ ...editingDispatch, templateName: event.target.value })} /></Field>
+              <Field label="Nome do template"><input value={editingDispatch.templateName} onChange={event => setEditingDispatch({ ...editingDispatch, templateName: event.target.value })} />{fieldError('template', 'Informe o template antes de marcar como pronto.')}</Field>
               <Field label="Integração"><Select value={editingDispatch.chip} values={CHIP_OPTIONS} placeholder="Selecione" onChange={value => setEditingDispatch({ ...editingDispatch, chip: value as DispatchChip })} /></Field>
               <Field label="Campanha">
                 <SelectWithCreate
@@ -910,12 +1558,14 @@ export default function App() {
                   values={campaigns}
                   placeholder="Selecione"
                   createLabel="Adicionar campanha"
-                  onChange={value => setEditingDispatch({ ...editingDispatch, campaign: value })}
+                  onChange={updateEditingCampaign}
                   onCreate={async value => {
                     await addCatalogItem('campaigns', value);
-                    setEditingDispatch(current => ({ ...current, campaign: value.trim() }));
+                    applyDispatchSuggestions({ ...editingDispatch, campaign: value.trim() });
                   }}
                 />
+                {suggestionHint('campanha', 'Campanha sugerida por uma relação compatível já conhecida.')}
+                {fieldError('campanha', 'Informe a campanha antes de marcar como pronto.')}
               </Field>
               <Field label="Público">
                 <SelectWithCreate
@@ -924,21 +1574,22 @@ export default function App() {
                   placeholder="Selecione"
                   createLabel="Adicionar público"
                   createPlaceholder="Nome do público"
-                  onChange={value => setEditingDispatch({ ...editingDispatch, audience: value })}
+                  onChange={updateEditingAudience}
                   onCreate={async value => {
                     await addCatalogItem('audiences', value);
-                    setEditingDispatch(current => ({ ...current, audience: value.trim() }));
+                    applyDispatchSuggestions({ ...editingDispatch, audience: value.trim() });
                   }}
                 />
+                {suggestionHint('publico', 'Público sugerido pelo histórico compatível desta modalidade.')}
+                {fieldError('publico', 'Informe o público antes de marcar como pronto.')}
               </Field>
-              <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatch({ ...editingDispatch, status: value as DispatchStatus })} /></Field>
-              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={value => setEditingDispatch({ ...editingDispatch, baseId: value })} /></Field>
+              <Field label="Status"><Select value={editingDispatch.status} values={editingDispatch.id ? STATUS : DISPATCH_FORM_STATUS} showPlaceholder={false} onChange={value => setEditingDispatchStatus(value as DispatchStatus)} /></Field>
+              <Field label="Base"><Select value={editingDispatch.baseId} values={state.bases.map(base => base.id)} labels={new Map(state.bases.map(base => [base.id, `${base.campaign} - ${base.mainBase}`]))} placeholder="Selecione" onChange={updateEditingBase} />{suggestionHint('base', 'Base sugerida por uma relação compatível já conhecida.')}{fieldError('base', 'Selecione uma base antes de continuar.')}</Field>
               <Field label="Responsável">
                 {sessionResponsible ? (
                   <input readOnly value={sessionResponsible} />
                 ) : (
                   <SelectWithCreate
-                    required
                     value={editingDispatch.responsible}
                     values={responsibles}
                     placeholder="Selecione"
@@ -951,20 +1602,31 @@ export default function App() {
                     }}
                   />
                 )}
+                {suggestionHint('responsavel', 'Responsável sugerido pelo último uso nesta modalidade.')}
+                {fieldError('responsavel', 'Informe o responsável antes de marcar como pronto.')}
               </Field>
-              <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} /></Field>
+              </div>
+            </section>
+            <section className="formSection">
+              <div className="formSectionTitle">2. Conteúdo do Disparo · {channelName(editingDispatch.channel || 'email')}</div>
+              <div className="modalGrid dispatchContentGrid">
+              {editingDispatch.channel !== 'whatsapp' && (
+                <Field label="Assunto" wide><input value={editingDispatch.subject} onChange={event => setEditingDispatch({ ...editingDispatch, subject: event.target.value })} />{fieldError('assunto', 'Informe o assunto antes de marcar como pronto.')}</Field>
+              )}
               {editingDispatch.channel !== 'html_email' && (
-                <Field label="Conteúdo do e-mail (corpo)" wide asGroup>
+                <Field label={editingDispatch.channel === 'whatsapp' ? 'Mensagem' : 'Conteúdo do e-mail (corpo)'} wide asGroup>
                   <RichTextEditor
                     value={editingDispatch.body}
                     onChange={value => setEditingDispatch({ ...editingDispatch, body: value })}
                   />
+                  {fieldError(editingDispatch.channel === 'whatsapp' ? 'mensagem' : 'conteudo', editingDispatch.channel === 'whatsapp' ? 'Informe a mensagem antes de marcar como pronto.' : 'Informe o conteúdo antes de marcar como pronto.')}
                 </Field>
               )}
               <Field label="Descrição" wide><textarea rows={3} value={editingDispatch.description} onChange={event => setEditingDispatch({ ...editingDispatch, description: event.target.value })} /></Field>
-              <Field label="Anexos de imagem" wide asGroup>
+              <Field label="Arquivos HTML" wide asGroup>
                 <AttachmentPicker
                   attachments={editingDispatch.attachments}
+                  label={editingDispatch.channel === 'email' || editingDispatch.channel === 'whatsapp' ? 'Anexar topo/imagem (até 20 MB)' : undefined}
                   onAdd={attachments => setEditingDispatch(current => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
                   onRemove={id => setEditingDispatch(current => ({ ...current, attachments: current.attachments.filter(item => item.id !== id) }))}
                 />
@@ -978,10 +1640,23 @@ export default function App() {
                     placeholder="<html>...</html>"
                     onChange={event => setEditingDispatch({ ...editingDispatch, htmlContent: event.target.value })}
                   />
+                  {fieldError('conteudo HTML', 'Informe o conteúdo HTML antes de marcar como pronto.')}
                 </Field>
               )}
+              </div>
+            </section>
             </div>
-            <ModalFoot saving={saving} onClose={closeModal} />
+            <aside className="readinessPanel">
+              <div className="readinessTop"><span>3. Checklist de Prontidão Operacional</span><strong>{readinessCompleted} de {readinessChecks.length}</strong></div>
+              <div className="readinessProgress"><i style={{ width: `${(readinessCompleted / readinessChecks.length) * 100}%` }} /></div>
+              <ul>
+                {readinessChecks.map(check => <li className={check.done ? 'done' : 'pending'} key={check.key}><span>{check.done ? '✓' : '!'}</span>{check.label}</li>)}
+              </ul>
+              {readinessCompleted < readinessChecks.length && <div className="readinessAlert"><strong>Complete os itens pendentes</strong><p>Revise os campos antes de marcar o disparo como pronto.</p></div>}
+              <button type="button" className="readinessAction" disabled={readinessCompleted < readinessChecks.length} onClick={() => setEditingDispatchStatus('Pronto para disparo')}>✓ Marcar como pronto</button>
+            </aside>
+            </div>
+            <ModalFoot saving={saving} onClose={requestModalClose} submitLabel={editingDispatchMode === 'edit' ? 'Salvar alterações' : 'Criar disparo'} />
           </form>
         </div>
       )}
@@ -989,7 +1664,7 @@ export default function App() {
       {modal === 'dispatchDetails' && viewingDispatch && (
         <div className="modalBackdrop" onMouseDown={closeModal}>
           <div className="modal detailsModal" onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={`Detalhes do disparo de ${channelName(viewingDispatch.channel || 'email')}`} onClose={closeModal} />
+            <ModalHead eyebrow={channelName(viewingDispatch.channel || 'email').toUpperCase()} title={dispatchDisplayName(viewingDispatch) || 'Detalhes do disparo'} onClose={closeModal} />
             <DispatchDetails
               dispatch={viewingDispatch}
               base={baseById.get(viewingDispatch.baseId)}
@@ -1004,18 +1679,18 @@ export default function App() {
                 type="button"
                 className="btn ghost"
                 onClick={() => sendDispatchToCalendar(viewingDispatch)}
-                disabled={calendarSyncing || viewingDispatch.status !== 'Pronto para disparo'}
+                disabled={viewingDispatch.status !== 'Pronto para disparo'}
               >
-                {calendarSyncing ? 'Sincronizando...' : 'Sincronizar Google Calendar'}
+                Sincronizar Google Calendar
               </button>
               <button
                 type="button"
                 className="btn ghost"
                 onClick={() => setCalendarDeleteTarget(viewingDispatch)}
-                disabled={calendarSyncing}
               >
                 Remover do Google Calendar
               </button>
+              <button type="button" className="btn dangerStrong" onClick={() => setDispatchDeleteTarget(viewingDispatch)}>Excluir disparo</button>
               <button type="button" className="btn primary" onClick={() => openDispatch(viewingDispatch)}>Editar disparo</button>
             </div>
           </div>
@@ -1030,6 +1705,7 @@ export default function App() {
               dispatches={viewingDayDispatches}
               onView={dispatch => openDispatchDetails(dispatch, true)}
               onEdit={dispatch => openDispatch(dispatch)}
+              onDelete={dispatch => setDispatchDeleteTarget(dispatch)}
             />
             <div className="modalFoot">
               <button type="button" className="btn primary" onClick={closeModal}>Fechar</button>
@@ -1040,9 +1716,9 @@ export default function App() {
 
       {modal === 'base' && (
         <div className="modalBackdrop" onMouseDown={closeModal}>
-          <form className="modal" onSubmit={submitBase} onMouseDown={event => event.stopPropagation()}>
-            <ModalHead title={editingBase.id ? 'Editar regra de base' : 'Nova regra de base'} onClose={closeModal} />
-            <div className="modalGrid">
+          <form className="modal baseRuleFormModal" onSubmit={submitBase} onMouseDown={event => event.stopPropagation()}>
+            <ModalHead eyebrow="REGRAS DE BASE" title={editingBase.id ? 'Editar regra de base' : 'Nova regra de base'} onClose={closeModal} />
+            <div className="modalGrid baseRuleFormGrid">
               <Field label="Campanha">
                 <SelectWithCreate
                   value={editingBase.campaign}
@@ -1075,7 +1751,7 @@ export default function App() {
                   />
                 )}
               </Field>
-              <Field label="Base principal" wide><input required value={editingBase.mainBase} onChange={event => setEditingBase({ ...editingBase, mainBase: event.target.value })} /></Field>
+              <Field label="Base principal"><input required value={editingBase.mainBase} onChange={event => setEditingBase({ ...editingBase, mainBase: event.target.value })} /></Field>
               <Field label="Bases excluídas" wide><textarea rows={2} value={editingBase.excludedBases} onChange={event => setEditingBase({ ...editingBase, excludedBases: event.target.value })} /></Field>
               <Field label="Ação esperada" wide><input required value={editingBase.expectedAction} onChange={event => setEditingBase({ ...editingBase, expectedAction: event.target.value })} /></Field>
               <Field label="Última atualização"><input type="date" value={editingBase.lastUpdated} onChange={event => setEditingBase({ ...editingBase, lastUpdated: event.target.value })} /></Field>
@@ -1088,7 +1764,7 @@ export default function App() {
               </Field>
               <Field label="Notas" wide><textarea rows={2} value={editingBase.notes} onChange={event => setEditingBase({ ...editingBase, notes: event.target.value })} /></Field>
             </div>
-            <ModalFoot saving={saving} onClose={closeModal} />
+            <ModalFoot saving={saving} onClose={closeModal} submitLabel="Salvar regra" />
           </form>
         </div>
       )}
@@ -1096,9 +1772,7 @@ export default function App() {
       {calendarDeleteTarget && (
         <div
           className="modalBackdrop calendarDeleteBackdrop"
-          onMouseDown={() => {
-            if (!calendarSyncing) setCalendarDeleteTarget(null);
-          }}
+          onMouseDown={() => setCalendarDeleteTarget(null)}
         >
           <div
             className="calendarDeleteModal"
@@ -1117,7 +1791,7 @@ export default function App() {
                 O disparo continuará salvo no aplicativo.
               </p>
               <div className="calendarDeleteMeta">
-                <span>{fmtDate(calendarDeleteTarget.date)}{calendarDeleteTarget.time ? ` às ${calendarDeleteTarget.time}` : ''}</span>
+                <span>{fmtDate(calendarDeleteTarget.date)}{calendarDeleteTarget.time ? ` às ${dispatchTime(calendarDeleteTarget.time)}` : ''}</span>
                 <span>{channelName(calendarDeleteTarget.channel || 'email')}</span>
               </div>
             </div>
@@ -1125,7 +1799,6 @@ export default function App() {
               <button
                 type="button"
                 className="btn ghost"
-                disabled={calendarSyncing}
                 onClick={() => setCalendarDeleteTarget(null)}
               >
                 Cancelar
@@ -1133,1336 +1806,46 @@ export default function App() {
               <button
                 type="button"
                 className="btn dangerStrong calendarDeleteButton"
-                disabled={calendarSyncing}
                 onClick={() => removeDispatchFromCalendar(calendarDeleteTarget)}
               >
-                {calendarSyncing ? 'Removendo...' : 'Sim, remover evento'}
+                Sim, remover evento
               </button>
             </div>
           </div>
         </div>
       )}
-    </main>
-  );
-}
-
-function unique(values: string[]) {
-  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
-}
-
-function responsibleForEmail(email: string) {
-  return RESPONSIBLE_BY_EMAIL[email.trim().toLowerCase()] || '';
-}
-
-function normalizeChip(value: string): DispatchChip {
-  return CHIP_OPTIONS.includes(value as DispatchChip) ? value as DispatchChip : '';
-}
-
-function normalizeState(data: AppState): AppState {
-  const dispatches = (data.dispatches || []).map(item => ({
-    ...item,
-    channel: item.channel || 'email',
-    time: item.time || '',
-    templateName: item.templateName || '',
-    chip: normalizeChip(item.chip || ''),
-    htmlContent: item.htmlContent || '',
-    subject: item.subject || '',
-    body: item.body || '',
-    attachments: Array.isArray(item.attachments) ? item.attachments : []
-  }));
-  const bases = (data.bases || []).map(base => ({
-    ...base,
-    spreadsheetAttachment: base.spreadsheetAttachment || null
-  }));
-  return {
-    dispatches,
-    bases,
-    campaigns: unique([...(data.campaigns || []), ...dispatches.map(item => item.campaign), ...bases.map(item => item.campaign)]),
-    audiences: unique([...(data.audiences || []), ...dispatches.map(item => item.audience)]),
-    responsibles: unique([...(data.responsibles || []), ...dispatches.map(item => item.responsible), ...bases.map(item => item.responsible)]),
-    revision: data.revision,
-    catalogDates: data.catalogDates || {},
-    database: data.database
-  };
-}
-
-function missingDispatchFields(dispatch: Dispatch) {
-  return [
-    !dispatch.responsible.trim() ? 'responsável' : ''
-  ].filter(Boolean);
-}
-
-function isRichHtml(value: string) {
-  return /<\/?[a-z][\s\S]*>/i.test(value);
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function plainTextToHtml(value: string) {
-  return escapeHtml(value).replace(/\n/g, '<br>');
-}
-
-function richTextHtml(value: string) {
-  if (!value.trim()) return '';
-  return sanitizeRichHtml(isRichHtml(value) ? value : plainTextToHtml(value));
-}
-
-function sanitizeRichHtml(value: string) {
-  const doc = new DOMParser().parseFromString(value, 'text/html');
-  const allowedTags = new Set([
-    'A', 'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4',
-    'I', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD',
-    'TH', 'THEAD', 'TR', 'U', 'UL'
-  ]);
-  const allowedStyles = new Set([
-    'background-color', 'color', 'font-size', 'font-style', 'font-weight',
-    'text-align', 'text-decoration'
-  ]);
-
-  doc.body.querySelectorAll('*').forEach(element => {
-    if (!allowedTags.has(element.tagName)) {
-      element.replaceWith(...Array.from(element.childNodes));
-      return;
-    }
-
-    Array.from(element.attributes).forEach(attribute => {
-      const name = attribute.name.toLowerCase();
-      if (name === 'href' && element.tagName === 'A') {
-        const href = attribute.value.trim();
-        if (/^(https?:|mailto:|tel:)/i.test(href)) {
-          element.setAttribute('target', '_blank');
-          element.setAttribute('rel', 'noreferrer');
-          return;
-        }
-      }
-
-      if (name === 'style') {
-        const cleanStyle = attribute.value
-          .split(';')
-          .map(rule => rule.trim())
-          .filter(rule => {
-            const [property, rawValue = ''] = rule.split(':');
-            const cleanProperty = property?.trim().toLowerCase();
-            const cleanValue = rawValue.trim().toLowerCase();
-            return allowedStyles.has(cleanProperty) && !/url|expression|javascript/.test(cleanValue);
-          })
-          .join('; ');
-        if (cleanStyle) element.setAttribute('style', cleanStyle);
-        else element.removeAttribute('style');
-        return;
-      }
-
-      element.removeAttribute(attribute.name);
-    });
-  });
-
-  return doc.body.innerHTML;
-}
-
-function insertHtmlAtSelection(html: string) {
-  if (document.queryCommandSupported?.('insertHTML')) {
-    document.execCommand('insertHTML', false, html);
-    return;
-  }
-
-  const selection = window.getSelection();
-  if (!selection?.rangeCount) return;
-  const range = selection.getRangeAt(0);
-  range.deleteContents();
-  const template = document.createElement('template');
-  template.innerHTML = html;
-  range.insertNode(template.content);
-  selection.collapseToEnd();
-}
-
-function isoDate(value: string) {
-  return value ? value.slice(0, 10) : '';
-}
-
-function dispatchTime(value: string) {
-  return value || '-';
-}
-
-function dispatchSortValue(dispatch: Dispatch, field: DispatchSortField) {
-  if (field === 'createdAt') return dispatch.createdAt || '';
-  if (field === 'updatedAt') return dispatch.updatedAt || '';
-  return `${dispatch.date} ${dispatch.time || '00:00'}`;
-}
-
-function fileToAttachment(file: File): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({
-      id: uid('anexo'),
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      dataUrl: String(reader.result || '')
-    });
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-function isExcelFile(file: File) {
-  return EXCEL_TYPES.includes(file.type) || /\.(xls|xlsx)$/i.test(file.name);
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function dispatchDisplayName(dispatch: Dispatch) {
-  return (dispatch.templateName || dispatch.campaign || '').trim();
-}
-
-function duplicateDispatchNameMap(dispatches: Dispatch[]) {
-  const groups = new Map<string, Dispatch[]>();
-  for (const dispatch of dispatches) {
-    const name = dispatchDisplayName(dispatch);
-    if (!name) continue;
-    const key = name.toLocaleLowerCase('pt-BR');
-    groups.set(key, [...(groups.get(key) || []), dispatch]);
-  }
-  const duplicates = new Map<string, Dispatch[]>();
-  for (const items of groups.values()) {
-    if (items.length > 1) duplicates.set(dispatchDisplayName(items[0]), items);
-  }
-  return duplicates;
-}
-
-function duplicateNameCount(dispatch: Dispatch, duplicates: Map<string, Dispatch[]>) {
-  const name = dispatchDisplayName(dispatch);
-  if (!name) return 0;
-  const entry = [...duplicates.entries()].find(([label]) => label.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'));
-  return entry ? entry[1].filter(item => item.id !== dispatch.id).length : 0;
-}
-
-function channelName(channel: DispatchChannel) {
-  if (channel === 'html_email') return 'E-mail HTML';
-  return channel === 'whatsapp' ? 'WhatsApp' : 'E-mail';
-}
-
-function monthLabel(month: string) {
-  const [year, monthIndex] = month.split('-').map(Number);
-  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(year, monthIndex - 1, 1));
-}
-
-function shiftMonth(month: string, amount: number) {
-  const [year, monthIndex] = month.split('-').map(Number);
-  const value = new Date(year, monthIndex - 1 + amount, 1);
-  return value.toISOString().slice(0, 7);
-}
-
-function calendarDays(month: string) {
-  const [year, monthIndex] = month.split('-').map(Number);
-  const first = new Date(year, monthIndex - 1, 1);
-  const start = new Date(first);
-  start.setDate(first.getDate() - first.getDay());
-  return Array.from({ length: 42 }, (_, index) => {
-    const value = new Date(start);
-    value.setDate(start.getDate() + index);
-    return value.toISOString().slice(0, 10);
-  });
-}
-
-function missingBaseFields(base: BaseRule) {
-  return [
-    !base.responsible.trim() ? 'responsável' : '',
-    !base.mainBase.trim() ? 'base principal' : '',
-    !base.expectedAction.trim() ? 'ação esperada' : ''
-  ].filter(Boolean);
-}
-
-function Metric({ label, value, tone = '' }: { label: string; value: number; tone?: string }) {
-  return <div className={`metric ${tone}`}><span>{label}</span><strong>{value}</strong></div>;
-}
-
-function brazilianDateText(value: string) {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
-}
-
-function maskBrazilianDate(value: string) {
-  const digits = value.replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-}
-
-function parseBrazilianDate(value: string) {
-  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!match) return '';
-  const [, day, month, year] = match;
-  const candidate = `${year}-${month}-${day}`;
-  const parsed = new Date(`${candidate}T12:00:00`);
-  return parsed.getFullYear() === Number(year) &&
-    parsed.getMonth() + 1 === Number(month) &&
-    parsed.getDate() === Number(day)
-    ? candidate
-    : '';
-}
-
-function BrazilianDatePicker({ value, required = false, onChange }: {
-  value: string;
-  required?: boolean;
-  onChange: (value: string) => void;
-}) {
-  const textRef = useRef<HTMLInputElement>(null);
-  const nativeRef = useRef<HTMLInputElement>(null);
-  const [draft, setDraft] = useState(brazilianDateText(value));
-
-  useEffect(() => {
-    if (document.activeElement !== textRef.current) setDraft(brazilianDateText(value));
-  }, [value]);
-
-  function updateText(rawValue: string) {
-    const masked = maskBrazilianDate(rawValue);
-    const parsed = parseBrazilianDate(masked);
-    setDraft(masked);
-    onChange(parsed);
-    textRef.current?.setCustomValidity(
-      masked.length === 10 && !parsed ? 'Informe uma data válida no formato dd/mm/aaaa.' : ''
-    );
-  }
-
-  function validateText() {
-    const parsed = parseBrazilianDate(draft);
-    textRef.current?.setCustomValidity(
-      parsed || (!required && !draft) ? '' : 'Informe uma data válida no formato dd/mm/aaaa.'
-    );
-  }
-
-  function openCalendar() {
-    const picker = nativeRef.current;
-    if (!picker) return;
-    try {
-      picker.showPicker();
-    } catch {
-      picker.click();
-    }
-  }
-
-  return (
-    <div className="localizedDatePicker">
-      <input
-        ref={textRef}
-        type="text"
-        inputMode="numeric"
-        autoComplete="off"
-        required={required}
-        pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}"
-        placeholder="dd/mm/aaaa"
-        aria-label="Data no formato dia, mês e ano"
-        value={draft}
-        onChange={event => updateText(event.target.value)}
-        onBlur={validateText}
-      />
-      <button type="button" className="datePickerButton" onClick={openCalendar} aria-label="Abrir calendário">
-        <span aria-hidden="true">▦</span>
-      </button>
-      <input
-        ref={nativeRef}
-        className="nativeDatePicker"
-        type="date"
-        lang="pt-BR"
-        tabIndex={-1}
-        aria-hidden="true"
-        value={value}
-        onChange={event => {
-          const next = event.target.value;
-          setDraft(brazilianDateText(next));
-          onChange(next);
-          textRef.current?.setCustomValidity('');
-        }}
-      />
-    </div>
-  );
-}
-
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
-const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0'));
-
-function TwentyFourHourPicker({ value, onChange }: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const match = value.match(/^(\d{2}):(\d{2})/);
-  const hour = match?.[1] || '';
-  const minute = match?.[2] || '';
-
-  function update(hourValue: string, minuteValue: string) {
-    if (!hourValue && !minuteValue) {
-      onChange('');
-      return;
-    }
-    onChange(`${hourValue || '00'}:${minuteValue || '00'}`);
-  }
-
-  return (
-    <div className="twentyFourHourPicker" aria-label="Horário em formato de 24 horas">
-      <select aria-label="Hora" value={hour} onChange={event => update(event.target.value, minute)}>
-        <option value="">Hora</option>
-        {HOUR_OPTIONS.map(option => <option value={option} key={option}>{option}</option>)}
-      </select>
-      <span aria-hidden="true">:</span>
-      <select aria-label="Minuto" value={minute} onChange={event => update(hour, event.target.value)}>
-        <option value="">Min</option>
-        {MINUTE_OPTIONS.map(option => <option value={option} key={option}>{option}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function Select({ value, values, placeholder = 'Todos', labels, required = false, showPlaceholder = true, onChange }: {
-  value: string;
-  values: readonly string[];
-  placeholder?: string;
-  labels?: Map<string, string>;
-  required?: boolean;
-  showPlaceholder?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <select value={value} required={required} onChange={event => onChange(event.target.value)}>
-      {showPlaceholder !== false && <option value="">{placeholder}</option>}
-      {values.map(item => <option key={item} value={item}>{labels?.get(item) || item}</option>)}
-    </select>
-  );
-}
-
-function StatusSelect({ value, onChange }: {
-  value: DispatchStatus;
-  onChange: (value: DispatchStatus) => void;
-}) {
-  return (
-    <select className={`statusSelect ${statusClass(value)}`} value={value} onChange={event => onChange(event.target.value as DispatchStatus)}>
-      {STATUS.map(item => <option key={item} value={item}>{item}</option>)}
-    </select>
-  );
-}
-
-function statusClass(status: DispatchStatus) {
-  return status
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, '-');
-}
-
-function SelectWithCreate({ value, values, placeholder, createLabel, createPlaceholder = 'Novo cadastro', required = false, onChange, onCreate }: {
-  value: string;
-  values: readonly string[];
-  placeholder: string;
-  createLabel: string;
-  createPlaceholder?: string;
-  required?: boolean;
-  onChange: (value: string) => void;
-  onCreate: (value: string) => Promise<void> | void;
-}) {
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function submitCreate() {
-    const clean = draft.trim();
-    if (!clean) return;
-    setBusy(true);
-    try {
-      await onCreate(clean);
-      setDraft('');
-      setCreating(false);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (creating) {
-    return (
-      <div className="selectCreate">
-        <input
-          autoFocus
-          required
-          value={draft}
-          placeholder={createPlaceholder}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              submitCreate();
-            }
-          }}
+      {dispatchDeleteTarget && (
+        <ConfirmDialog
+          title="Excluir disparo?"
+          text={`O disparo ${dispatchDisplayName(dispatchDeleteTarget) || 'selecionado'} será removido do planejamento.`}
+          safeLabel="Cancelar"
+          confirmLabel="Confirmar exclusão"
+          onSafe={() => setDispatchDeleteTarget(null)}
+          onConfirm={confirmDeleteDispatch}
         />
-        <button type="button" className="btn primary small" disabled={busy || !draft.trim()} onClick={submitCreate}>{busy ? 'Salvando...' : 'Salvar'}</button>
-        <button type="button" className="btn ghost small" onClick={() => setCreating(false)}>Cancelar</button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="selectCreate">
-      <Select required={required} value={value} values={values} placeholder={placeholder} onChange={onChange} />
-      <button type="button" className="btn ghost small" onClick={() => setCreating(true)}>{createLabel}</button>
-    </div>
-  );
-}
-
-function RichTextEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const editorRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || document.activeElement === editor) return;
-    editor.innerHTML = richTextHtml(value);
-  }, [value]);
-
-  function syncValue() {
-    const editor = editorRef.current;
-    if (!editor) return;
-    onChange(sanitizeRichHtml(editor.innerHTML));
-  }
-
-  return (
-    <div
-      ref={editorRef}
-      className="contentEditor"
-      contentEditable
-      role="textbox"
-      aria-multiline="true"
-      suppressContentEditableWarning
-      onInput={syncValue}
-      onBlur={event => {
-        const clean = sanitizeRichHtml(event.currentTarget.innerHTML);
-        event.currentTarget.innerHTML = clean;
-        onChange(clean);
-      }}
-      onPaste={event => {
-        const html = event.clipboardData.getData('text/html');
-        const text = event.clipboardData.getData('text/plain');
-        if (!html && !text) return;
-        event.preventDefault();
-        insertHtmlAtSelection(richTextHtml(html || text));
-        syncValue();
-      }}
-    />
-  );
-}
-
-function CatalogManager({ title, description, values, dates, onAdd, onUpdate, onRemove }: {
-  title: string;
-  description: string;
-  values: string[];
-  dates: Record<string, { createdAt: string; updatedAt: string }>;
-  onAdd: (value: string) => void;
-  onUpdate: (oldValue: string, newValue: string) => void;
-  onRemove: (values: string[]) => Promise<void> | void;
-}) {
-  const [newValue, setNewValue] = useState('');
-  const [editing, setEditing] = useState('');
-  const [draft, setDraft] = useState('');
-  const [selected, setSelected] = useState<string[]>([]);
-  const [confirming, setConfirming] = useState(false);
-  const [query, setQuery] = useState('');
-  const [order, setOrder] = useState<'name-asc' | 'name-desc' | 'created-desc' | 'created-asc' | 'updated-desc' | 'updated-asc'>('name-asc');
-  const [createdFrom, setCreatedFrom] = useState('');
-  const [createdTo, setCreatedTo] = useState('');
-  const [updatedFrom, setUpdatedFrom] = useState('');
-  const [updatedTo, setUpdatedTo] = useState('');
-  const selectedSet = new Set(selected);
-  const visibleValues = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    return values
-      .filter(value => {
-        const createdAt = isoDate(dates[value]?.createdAt || '');
-        const updatedAt = isoDate(dates[value]?.updatedAt || '');
-        if (search && !value.toLowerCase().includes(search)) return false;
-        if (createdFrom && createdAt < createdFrom) return false;
-        if (createdTo && createdAt > createdTo) return false;
-        if (updatedFrom && updatedAt < updatedFrom) return false;
-        if (updatedTo && updatedAt > updatedTo) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        if (order === 'name-desc') return b.localeCompare(a, 'pt-BR');
-        if (order === 'created-desc') return isoDate(dates[b]?.createdAt || '').localeCompare(isoDate(dates[a]?.createdAt || ''));
-        if (order === 'created-asc') return isoDate(dates[a]?.createdAt || '').localeCompare(isoDate(dates[b]?.createdAt || ''));
-        if (order === 'updated-desc') return isoDate(dates[b]?.updatedAt || '').localeCompare(isoDate(dates[a]?.updatedAt || ''));
-        if (order === 'updated-asc') return isoDate(dates[a]?.updatedAt || '').localeCompare(isoDate(dates[b]?.updatedAt || ''));
-        return a.localeCompare(b, 'pt-BR');
-      });
-  }, [createdFrom, createdTo, dates, order, query, updatedFrom, updatedTo, values]);
-  const datalistId = `catalog-${title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\W+/g, '-')}`;
-
-  useEffect(() => {
-    setSelected(current => current.filter(item => values.includes(item)));
-  }, [values]);
-
-  function submitNew(event: FormEvent) {
-    event.preventDefault();
-    onAdd(newValue);
-    setNewValue('');
-  }
-
-  function startEdit(value: string) {
-    setEditing(value);
-    setDraft(value);
-  }
-
-  function saveEdit(event: FormEvent) {
-    event.preventDefault();
-    onUpdate(editing, draft);
-    setEditing('');
-    setDraft('');
-  }
-
-  function toggleSelected(value: string, checked: boolean) {
-    setConfirming(false);
-    setSelected(current => checked ? unique([...current, value]) : current.filter(item => item !== value));
-  }
-
-  function toggleAll(checked: boolean) {
-    setConfirming(false);
-    setSelected(checked ? visibleValues : []);
-  }
-
-  async function confirmRemove() {
-    await onRemove(selected);
-    setSelected([]);
-    setConfirming(false);
-  }
-
-  return (
-    <div className="catalogCard">
-      <div className="catalogHead">
-        <div>
-          <h3>{title}</h3>
-          <p>{description}</p>
-        </div>
-        <span>{values.length}</span>
-      </div>
-      <form className="catalogForm" onSubmit={submitNew}>
-        <input value={newValue} placeholder="Novo cadastro" onChange={event => setNewValue(event.target.value)} />
-        <button className="btn primary" disabled={!newValue.trim()}>Adicionar</button>
-      </form>
-      <div className="catalogTools">
-        <input
-          list={datalistId}
-          placeholder={`Pesquisar ${title.toLowerCase()}`}
-          value={query}
-          onChange={event => setQuery(event.target.value)}
+      )}
+      {baseDeleteTarget && (
+        <ConfirmDialog
+          title="Excluir regra de base?"
+          text={`A regra ${baseDeleteTarget.campaign || baseDeleteTarget.mainBase || 'selecionada'} será removida. Os disparos vinculados ficarão sem base.`}
+          safeLabel="Cancelar"
+          confirmLabel="Confirmar exclusão"
+          onSafe={() => setBaseDeleteTarget(null)}
+          onConfirm={() => deleteBase(baseDeleteTarget.id)}
         />
-        <datalist id={datalistId}>
-          {values.map(value => <option key={value} value={value} />)}
-        </datalist>
-        <select value={order} onChange={event => setOrder(event.target.value as typeof order)}>
-          <option value="name-asc">Nome A-Z</option>
-          <option value="name-desc">Nome Z-A</option>
-          <option value="created-desc">Criação recente</option>
-          <option value="created-asc">Criação antiga</option>
-          <option value="updated-desc">Alteração recente</option>
-          <option value="updated-asc">Alteração antiga</option>
-        </select>
-      </div>
-      <div className="catalogDateFilters">
-        <label><span>Criação de</span><input type="date" value={createdFrom} onChange={event => setCreatedFrom(event.target.value)} /></label>
-        <label><span>Criação até</span><input type="date" value={createdTo} onChange={event => setCreatedTo(event.target.value)} /></label>
-        <label><span>Alteração de</span><input type="date" value={updatedFrom} onChange={event => setUpdatedFrom(event.target.value)} /></label>
-        <label><span>Alteração até</span><input type="date" value={updatedTo} onChange={event => setUpdatedTo(event.target.value)} /></label>
-      </div>
-      {values.length > 0 && (
-        <div className="catalogBulk">
-          <label>
-            <input
-              type="checkbox"
-              checked={visibleValues.length > 0 && visibleValues.every(value => selectedSet.has(value))}
-              onChange={event => toggleAll(event.target.checked)}
-            />
-            Selecionar visíveis
-          </label>
-          <button type="button" className="btn dangerSoft small" disabled={!selected.length} onClick={() => setConfirming(true)}>
-            Remover selecionados
-          </button>
-        </div>
       )}
-      {confirming && (
-        <div className="confirmStrip">
-          <strong>Remover {selected.length} cadastro(s)?</strong>
-          <span>Registros que usam esses valores ficarão em branco.</span>
-          <div>
-            <button type="button" className="btn ghost small" onClick={() => setConfirming(false)}>Cancelar</button>
-            <button type="button" className="btn dangerStrong small" onClick={confirmRemove}>Confirmar exclusão</button>
-          </div>
-        </div>
-      )}
-      <div className="catalogList">
-        {!values.length && <div className="empty smallEmpty">Nada cadastrado ainda.</div>}
-        {values.length > 0 && !visibleValues.length && <div className="empty smallEmpty">Nenhum cadastro encontrado.</div>}
-        {visibleValues.map(value => (
-          <div className="catalogItem" key={value}>
-            {editing === value ? (
-              <form className="catalogEdit" onSubmit={saveEdit}>
-                <input autoFocus value={draft} onChange={event => setDraft(event.target.value)} />
-                <button className="btn primary small">Salvar</button>
-                <button type="button" className="btn ghost small" onClick={() => setEditing('')}>Cancelar</button>
-              </form>
-            ) : (
-              <>
-                <label className="catalogSelect">
-                  <input
-                    type="checkbox"
-                    checked={selectedSet.has(value)}
-                    onChange={event => toggleSelected(value, event.target.checked)}
-                  />
-                  <strong>{value}</strong>
-                </label>
-                <small className="catalogDates">
-                  Criado: {fmtDate(isoDate(dates[value]?.createdAt || ''))} | Alterado: {fmtDate(isoDate(dates[value]?.updatedAt || ''))}
-                </small>
-                <div className="actions">
-                  <button onClick={() => startEdit(value)}>Editar</button>
-                  <button className="danger" onClick={() => {
-                    setSelected([value]);
-                    setConfirming(true);
-                  }}>Remover</button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, wide, asGroup = false, children }: { label: string; wide?: boolean; asGroup?: boolean; children: ReactNode }) {
-  const className = `field ${wide ? 'wide' : ''}`;
-  if (asGroup) return <div className={className}><span>{label}</span>{children}</div>;
-  return <label className={className}><span>{label}</span>{children}</label>;
-}
-
-function ModalHead({ title, onClose }: { title: string; onClose: () => void }) {
-  return <div className="modalHead"><h2>{title}</h2><button type="button" onClick={onClose}>Fechar</button></div>;
-}
-
-function ModalFoot({ saving, onClose }: { saving: boolean; onClose: () => void }) {
-  return (
-    <div className="modalFoot">
-      <button type="button" className="btn ghost" onClick={onClose}>Cancelar</button>
-      <button className="btn primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
-    </div>
-  );
-}
-
-function AttachmentPicker({ attachments, onAdd, onRemove }: {
-  attachments: Dispatch['attachments'];
-  onAdd: (attachments: Dispatch['attachments']) => void;
-  onRemove: (id: string) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-
-  async function handleFiles(files: FileList | null) {
-    if (!files?.length) return;
-    setBusy(true);
-    setMessage('');
-    try {
-      const allFiles = [...files];
-      const invalidSize = allFiles.filter(file => file.size > MAX_ATTACHMENT_SIZE);
-      const images = allFiles.filter(file => ['image/png', 'image/jpeg'].includes(file.type) && file.size <= MAX_ATTACHMENT_SIZE);
-      if (invalidSize.length) {
-        setMessage(`${invalidSize.length} imagem(ns) acima de 20 MB não foram anexadas.`);
-      }
-      onAdd(await Promise.all(images.map(fileToAttachment)));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="attachmentPicker">
-      <label className="attachmentInput">
-        <input
-          type="file"
-          accept="image/png,image/jpeg,.png,.jpg,.jpeg"
-          multiple
-          onChange={event => {
-            handleFiles(event.target.files);
-            event.currentTarget.value = '';
-          }}
+      {pendingDiscardAction && (
+        <ConfirmDialog
+          title="Descartar alterações?"
+          text="Existem alterações que ainda não foram salvas neste disparo."
+          safeLabel="Continuar editando"
+          confirmLabel="Descartar alterações"
+          onSafe={continueEditing}
+          onConfirm={discardChanges}
         />
-        <span>{busy ? 'Carregando imagens...' : 'Anexar PNG/JPG/JPEG até 20 MB'}</span>
-      </label>
-      {message && <small className="attachmentMessage">{message}</small>}
-      {attachments.length > 0 && (
-        <div className="attachmentGrid">
-          {attachments.map(attachment => (
-            <div className="attachmentItem" key={attachment.id}>
-              <img src={attachment.dataUrl} alt={attachment.name} />
-              <div>
-                <strong>{attachment.name}</strong>
-                <small>{formatBytes(attachment.size)}</small>
-              </div>
-              <div className="attachmentActions">
-                <a href={attachment.dataUrl} download={attachment.name}>Baixar</a>
-                <button type="button" className="danger" onClick={() => onRemove(attachment.id)}>Remover</button>
-              </div>
-            </div>
-          ))}
-        </div>
       )}
-    </div>
-  );
-}
-
-function SpreadsheetAttachmentPicker({ attachment, onChange, onRemove }: {
-  attachment: FileAttachment | null;
-  onChange: (attachment: FileAttachment) => void;
-  onRemove: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-
-  async function handleFile(file: File | undefined) {
-    if (!file) return;
-    setBusy(true);
-    setMessage('');
-    try {
-      if (!isExcelFile(file)) {
-        setMessage('Anexe apenas arquivos .xls ou .xlsx.');
-        return;
-      }
-      if (file.size > MAX_ATTACHMENT_SIZE) {
-        setMessage('A base de disparo precisa ter até 20 MB.');
-        return;
-      }
-      onChange(await fileToAttachment(file));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="attachmentPicker">
-      <label className="attachmentInput">
-        <input
-          type="file"
-          accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={event => {
-            handleFile(event.target.files?.[0]);
-            event.currentTarget.value = '';
-          }}
-        />
-        <span>{busy ? 'Carregando base de disparo...' : attachment ? 'Trocar base de disparo' : 'Anexar base XLS/XLSX até 20 MB'}</span>
-      </label>
-      {message && <small className="attachmentMessage">{message}</small>}
-      {attachment && (
-        <div className="attachmentGrid single">
-          <div className="attachmentItem">
-            <div className="fileIcon">XLS</div>
-            <div>
-              <strong>{attachment.name}</strong>
-              <small>{formatBytes(attachment.size)}</small>
-            </div>
-            <div className="attachmentActions">
-              <a href={attachment.dataUrl} download={attachment.name}>Baixar</a>
-              <button type="button" className="danger" onClick={onRemove}>Remover</button>
-            </div>
-          </div>
         </div>
-      )}
+      </main>
     </div>
-  );
-}
-
-function UpcomingList({ dispatches, bases }: { dispatches: Dispatch[]; bases: BaseRule[] }) {
-  if (!dispatches.length) return <div className="empty smallEmpty">Nenhum disparo nos próximos 15 dias.</div>;
-  return (
-    <div className="dailyList upcomingScroll">
-      {dispatches.map(dispatch => {
-        const validation = dispatchValidation(dispatch, bases);
-        return (
-          <div className="dailyItem" key={dispatch.id}>
-            <strong>{fmtDate(dispatch.date)}{dispatch.time ? ` - ${dispatch.time}` : ''} - {dispatch.campaign || 'Sem campanha'}</strong>
-            <span>{dispatch.audience || 'Sem público'} | {dispatch.status}</span>
-            <ValidationBadge validation={validation} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function IssueList({ items }: { items: string[] }) {
-  if (!items.length) return <div className="empty smallEmpty">Nenhuma pendência de cadastro encontrada.</div>;
-  return (
-    <div className="dailyList">
-      {items.map(item => <div className="dailyItem issue" key={item}>{item}</div>)}
-    </div>
-  );
-}
-
-function CalendarView({ month, dispatches, onView, onDayView }: {
-  month: string;
-  dispatches: Dispatch[];
-  onView: (dispatch: Dispatch) => void;
-  onDayView: (day: string) => void;
-}) {
-  const days = calendarDays(month);
-  const today = todayISO();
-  const byDate = new Map<string, Dispatch[]>();
-  for (const dispatch of dispatches) {
-    byDate.set(dispatch.date, [...(byDate.get(dispatch.date) || []), dispatch]);
-  }
-
-  return (
-    <div className="calendar">
-      {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => <div className="calendarWeekday" key={day}>{day}</div>)}
-      {days.map(day => {
-        const items = byDate.get(day) || [];
-        const outside = !day.startsWith(month);
-        const previewItems = items.slice(0, 3);
-        const hiddenCount = Math.max(0, items.length - previewItems.length);
-        return (
-          <div
-            role="button"
-            tabIndex={0}
-            className={`calendarDay ${outside ? 'outside' : ''} ${day === today ? 'today' : ''}`}
-            key={day}
-            onClick={() => onDayView(day)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onDayView(day);
-              }
-            }}
-          >
-            <div className="calendarDate">
-              <strong>{Number(day.slice(8, 10))}</strong>
-              {items.length > 0 && <span>{items.length}</span>}
-            </div>
-            <div className="calendarEvents">
-              {previewItems.map(dispatch => (
-                <button
-                  type="button"
-                  className={`calendarEvent ${dispatch.channel || 'email'} ${statusClass(dispatch.status)}`}
-                  key={dispatch.id}
-                  onClick={event => {
-                    event.stopPropagation();
-                    onView(dispatch);
-                  }}
-                  title={`${channelName(dispatch.channel || 'email')} - ${dispatch.campaign || 'Sem campanha'}`}
-                >
-                  <span><i aria-hidden="true" />{dispatch.time || '--:--'}</span>
-                  <strong>{dispatch.campaign || dispatch.templateName || 'Sem campanha'}</strong>
-                  <small>{channelName(dispatch.channel || 'email')}</small>
-                </button>
-              ))}
-              {hiddenCount > 0 && <span className="calendarMore">+ {hiddenCount} disparo(s). Clique no dia para ver todos.</span>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function CalendarDayDetails({ dispatches, onView, onEdit }: {
-  dispatches: Dispatch[];
-  onView: (dispatch: Dispatch) => void;
-  onEdit: (dispatch: Dispatch) => void;
-}) {
-  if (!dispatches.length) return <div className="empty">Nenhum disparo neste dia.</div>;
-  return (
-    <div className="dayDispatchList">
-      {dispatches.map(dispatch => (
-        <div className={`dayDispatchItem ${dispatch.channel || 'email'}`} key={dispatch.id}>
-          <div className="dayDispatchTime">
-            <strong>{dispatch.time || '--:--'}</strong>
-            <span>{channelName(dispatch.channel || 'email')}</span>
-          </div>
-          <div className="dayDispatchInfo">
-            <h3>{dispatch.campaign || dispatch.templateName || 'Sem campanha'}</h3>
-            <p>{dispatch.audience || 'Sem público'} | {dispatch.status}</p>
-            <div className="dayDispatchMeta">
-              <span>Template: {dispatch.templateName || '-'}</span>
-              <span>Integração: {dispatch.chip || '-'}</span>
-              <span>Responsável: {dispatch.responsible || '-'}</span>
-            </div>
-            {dispatch.description && <small>{dispatch.description}</small>}
-          </div>
-          <div className="actions">
-            <button type="button" onClick={() => onView(dispatch)}>Ver completo</button>
-            <button type="button" onClick={() => onEdit(dispatch)}>Editar</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DetailItem({ label, value, wide = false }: { label: string; value: ReactNode; wide?: boolean }) {
-  const isPrimitive = typeof value === 'string' || typeof value === 'number';
-  return (
-    <div className={`detailItem ${wide ? 'wide' : ''}`}>
-      <span>{label}</span>
-      {isPrimitive ? <strong>{value || '-'}</strong> : <div className="detailValue">{value || '-'}</div>}
-    </div>
-  );
-}
-
-function RichContentPreview({ html }: { html: string }) {
-  if (!html.trim()) return <>-</>;
-  return <div className="richContentPreview" dangerouslySetInnerHTML={{ __html: richTextHtml(html) }} />;
-}
-
-function DispatchDetails({ dispatch, base, validation, conflicts, duplicateCount }: {
-  dispatch: Dispatch;
-  base?: BaseRule;
-  validation: ReturnType<typeof dispatchValidation>;
-  conflicts: Dispatch[];
-  duplicateCount: number;
-}) {
-  const displayName = dispatchDisplayName(dispatch);
-  return (
-    <div className="detailContent">
-      <div className="detailHero">
-        <div>
-          <span className={`channelBadge ${dispatch.channel || 'email'}`}>{channelName(dispatch.channel || 'email')}</span>
-          <h3>{displayName || 'Disparo sem nome'}</h3>
-          <p>{dispatch.campaign || 'Sem campanha'}{dispatch.audience ? ` para ${dispatch.audience}` : ''}</p>
-        </div>
-        <ValidationBadge validation={validation} />
-      </div>
-
-      <div className="detailGrid">
-        <DetailItem label="Data de disparo" value={fmtDate(dispatch.date)} />
-        <DetailItem label="Hora do disparo" value={dispatchTime(dispatch.time)} />
-        <DetailItem label="Criado em" value={fmtDate(isoDate(dispatch.createdAt))} />
-        <DetailItem label="Status" value={<span className={`statusText ${statusClass(dispatch.status)}`}>{dispatch.status}</span>} />
-        <DetailItem label="Nome do template" value={dispatch.templateName || '-'} />
-        <DetailItem label="Integração" value={dispatch.chip || '-'} />
-        <DetailItem label="Campanha" value={dispatch.campaign || '-'} />
-        <DetailItem label="Público" value={dispatch.audience || '-'} />
-        <DetailItem label="Responsável" value={dispatch.responsible || '-'} />
-        <DetailItem label="Base principal" value={base?.mainBase || 'Sem base'} wide />
-        <DetailItem label="Bases excluídas" value={base?.excludedBases || 'Nenhuma exclusão configurada'} wide />
-        <DetailItem label="Assunto" value={dispatch.subject || '-'} wide />
-        <DetailItem label="Conteúdo do e-mail (corpo)" value={<RichContentPreview html={dispatch.body} />} wide />
-        <DetailItem label="Descrição" value={dispatch.description || '-'} wide />
-        {dispatch.attachments.length > 0 && (
-          <DetailItem label="Anexos" value={<AttachmentPreview attachments={dispatch.attachments} />} wide />
-        )}
-        {dispatch.channel === 'html_email' && (
-          <DetailItem label="HTML salvo" value={<HtmlPreviewBlock html={dispatch.htmlContent} />} wide />
-        )}
-        <DetailItem label="Alertas" value={validation.issues.length ? validation.issues.join('; ') : 'Sem alertas'} wide />
-        {conflicts.length > 0 && (
-          <DetailItem
-            label="Sobreposição"
-            value={`${conflicts.length} disparo(s) para o mesmo público em data próxima`}
-            wide
-          />
-        )}
-        {duplicateCount > 0 && (
-          <DetailItem
-            label="Nome duplicado"
-            value={`Mesmo nome em ${duplicateCount} outro(s) disparo(s)`}
-            wide
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function HtmlPreviewBlock({ html }: { html: string }) {
-  return (
-    <div className="htmlPreviewBlock">
-      <button
-        type="button"
-        className="btn primary small"
-        disabled={!html.trim()}
-        onClick={() => navigator.clipboard.writeText(html)}
-      >
-        Copiar HTML
-      </button>
-      <pre className="htmlPreview">{html || '-'}</pre>
-    </div>
-  );
-}
-
-function AttachmentPreview({ attachments }: { attachments: Dispatch['attachments'] }) {
-  return (
-    <div className="attachmentGrid previewOnly">
-      {attachments.map(attachment => (
-        <div className="attachmentItem" key={attachment.id}>
-          <img src={attachment.dataUrl} alt={attachment.name} />
-          <div>
-            <strong>{attachment.name}</strong>
-            <small>{formatBytes(attachment.size)}</small>
-          </div>
-          <div className="attachmentActions">
-            <a href={attachment.dataUrl} download={attachment.name}>Baixar</a>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DispatchTable({ dispatches, bases, overlaps, duplicateNames, onView, onEdit, onDelete, onStatus }: {
-  dispatches: Dispatch[];
-  bases: BaseRule[];
-  overlaps: Map<string, Dispatch[]>;
-  duplicateNames: Map<string, Dispatch[]>;
-  onView: (dispatch: Dispatch) => void;
-  onEdit: (dispatch: Dispatch) => void;
-  onDelete: (ids: string[]) => Promise<void> | void;
-  onStatus: (id: string, status: DispatchStatus) => void;
-}) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [confirming, setConfirming] = useState(false);
-  const selectedSet = new Set(selected);
-
-  useEffect(() => {
-    setSelected(current => current.filter(id => dispatches.some(dispatch => dispatch.id === id)));
-  }, [dispatches]);
-
-  function toggleSelected(id: string, checked: boolean) {
-    setConfirming(false);
-    setSelected(current => checked ? [...new Set([...current, id])] : current.filter(item => item !== id));
-  }
-
-  function toggleAll(checked: boolean) {
-    setConfirming(false);
-    setSelected(checked ? dispatches.map(dispatch => dispatch.id) : []);
-  }
-
-  async function confirmDelete() {
-    await onDelete(selected);
-    setSelected([]);
-    setConfirming(false);
-  }
-
-  if (!dispatches.length) return <div className="empty">Nenhum disparo encontrado.</div>;
-  return (
-    <div className="dispatchList">
-      <div className="dispatchBulk">
-        <label>
-          <input
-            type="checkbox"
-            checked={selected.length === dispatches.length}
-            onChange={event => toggleAll(event.target.checked)}
-          />
-          Selecionar todos
-        </label>
-        <button type="button" className="btn dangerSoft small" disabled={!selected.length} onClick={() => setConfirming(true)}>
-          Remover selecionados
-        </button>
-      </div>
-      {confirming && (
-        <div className="confirmStrip dispatchConfirm">
-          <strong>Remover {selected.length} disparo(s)?</strong>
-          <span>Essa ação remove os disparos selecionados do planejamento e salva no Supabase.</span>
-          <div>
-            <button type="button" className="btn ghost small" onClick={() => setConfirming(false)}>Cancelar</button>
-            <button type="button" className="btn dangerStrong small" onClick={confirmDelete}>Confirmar exclusão</button>
-          </div>
-        </div>
-      )}
-      <div className="tableWrap">
-        <table className="dispatchTable">
-          <colgroup>
-            <col className="colSelect" />
-            <col className="colDate" />
-            <col className="colTime" />
-            <col className="colCampaign" />
-            <col className="colAudience" />
-            <col className="colStatus" />
-            <col className="colValidation" />
-            <col className="colActions" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th></th>
-              <th>Data de disparo</th>
-              <th>Hora</th>
-              <th>Campanha</th>
-              <th>Público</th>
-              <th>Status</th>
-              <th>Validação</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dispatches.map(dispatch => {
-              const validation = dispatchValidation(dispatch, bases);
-              const conflicts = overlaps.get(dispatch.id) || [];
-              const duplicateCount = duplicateNameCount(dispatch, duplicateNames);
-              return (
-                <tr
-                  className="clickableRow"
-                  key={dispatch.id}
-                  tabIndex={0}
-                  onClick={() => onView(dispatch)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter') onView(dispatch);
-                  }}
-                >
-                  <td className="selectCell" onClick={event => event.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSet.has(dispatch.id)}
-                      onChange={event => toggleSelected(dispatch.id, event.target.checked)}
-                    />
-                  </td>
-                  <td className="date">{fmtDate(dispatch.date)}</td>
-                  <td>{dispatchTime(dispatch.time)}</td>
-                  <td><span className="pill">{dispatch.campaign || 'Sem campanha'}</span><small>{dispatch.responsible || 'Sem responsável'}</small></td>
-                  <td>{dispatch.audience || '-'}</td>
-                  <td onClick={event => event.stopPropagation()}><StatusSelect value={dispatch.status} onChange={value => onStatus(dispatch.id, value)} /></td>
-                  <td>
-                    <ValidationBadge validation={validation} />
-                    {conflicts.length > 0 && <small className="overlap">Sobreposição com {conflicts.length} disparo(s)</small>}
-                    {duplicateCount > 0 && <small className="duplicateName">Mesmo nome em {duplicateCount} disparo(s)</small>}
-                  </td>
-                  <td className="actions" onClick={event => event.stopPropagation()}>
-                    {dispatch.status !== 'Enviado' && (
-                      <button className="sentQuickAction" onClick={() => onStatus(dispatch.id, 'Enviado')}>Enviado</button>
-                    )}
-                    <button onClick={() => onEdit(dispatch)}>Editar</button>
-                    <button className="danger" onClick={() => {
-                      setSelected([dispatch.id]);
-                      setConfirming(true);
-                    }}>Excluir</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function BaseTable({ bases, onEdit, onDelete }: {
-  bases: BaseRule[];
-  onEdit: (base: BaseRule) => void;
-  onDelete: (id: string) => void;
-}) {
-  if (!bases.length) return <div className="empty">Nenhuma regra cadastrada.</div>;
-  return (
-    <div className="tableWrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Campanha</th>
-            <th>Base principal</th>
-            <th>Ação esperada</th>
-            <th>Atualização</th>
-            <th>Responsável</th>
-            <th>Validação</th>
-            <th>Planilha</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {bases.map(base => (
-            <tr key={base.id}>
-              <td><span className="pill">{base.campaign || 'Sem campanha'}</span></td>
-              <td>{base.mainBase}</td>
-              <td>{base.expectedAction}</td>
-              <td>{fmtDate(base.lastUpdated)}</td>
-              <td>{base.responsible}</td>
-              <td><ValidationBadge validation={baseValidation(base)} /></td>
-              <td>
-                {base.spreadsheetAttachment ? (
-                  <a className="downloadLink" href={base.spreadsheetAttachment.dataUrl} download={base.spreadsheetAttachment.name}>Baixar</a>
-                ) : '-'}
-              </td>
-              <td className="actions"><button onClick={() => onEdit(base)}>Editar</button><button className="danger" onClick={() => onDelete(base.id)}>Excluir</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ValidationBadge({ validation }: { validation: ReturnType<typeof baseValidation> }) {
-  const label = validation.level === 'green' ? 'Validada' : validation.level === 'red' ? 'Risco' : 'Conferir';
-  return <span className={`validation ${validation.level}`} title={validation.issues.join(' | ')}>{label}</span>;
-}
-
-function LoginScreen({ error, onLogin }: {
-  error: string;
-  onLogin: (email: string, password: string, keepConnected: boolean) => Promise<void>;
-}) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [keepConnected, setKeepConnected] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      await onLogin(email, password, keepConnected);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="authPage">
-      <form className="authCard" onSubmit={submit}>
-        <img className="authLogo" src="/unigran-logo.png" alt="UNIGRAN" />
-        <div>
-          <h1>Entrar no planejamento</h1>
-          <p>Acesso restrito aos e-mails autorizados do setor.</p>
-        </div>
-        {error && <div className="authError">{error}</div>}
-        <label className="field">
-          <span>E-mail</span>
-          <input
-            autoFocus
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={event => setEmail(event.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>Senha</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={event => setPassword(event.target.value)}
-          />
-        </label>
-        <label className="rememberLogin">
-          <input
-            type="checkbox"
-            checked={keepConnected}
-            onChange={event => setKeepConnected(event.target.checked)}
-          />
-          Manter conectado neste navegador
-        </label>
-        <button className="btn primary authButton" disabled={busy}>{busy ? 'Entrando...' : 'Entrar'}</button>
-      </form>
-    </main>
   );
 }

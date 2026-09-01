@@ -3,20 +3,26 @@ import http from 'node:http';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toN8nCalendarEvent } from './calendar-event.js';
+import { missingReadyDispatchFields, shouldValidateReadiness } from '../shared/dispatch-readiness.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 6000);
 const ROOT = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT, 'dist');
 const INDEX_FILE = path.join(ROOT, 'index.html');
 const MAX_BODY_SIZE = 40_000_000;
+const DISPATCH_RETENTION_DAYS = 3650; //10 anos
+const RETENTION_TIME_ZONE = 'America/Campo_Grande';
+const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 loadEnvFile(path.join(ROOT, '.env'));
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_READY = Boolean(SUPABASE_URL && SUPABASE_KEY);
 const N8N_CALENDAR_WEBHOOK_URL = (process.env.N8N_CALENDAR_WEBHOOK_URL || '').trim();
 const N8N_CALENDAR_WEBHOOK_SECRET = (process.env.N8N_CALENDAR_WEBHOOK_SECRET || '').trim();
@@ -82,6 +88,50 @@ function safePositiveInteger(value, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
+function todayInTimeZone(timeZone = RETENTION_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function addDaysToISODate(dateValue, days) {
+  const [year, month, day] = String(dateValue || '').split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function dispatchRetentionCutoff() {
+  return addDaysToISODate(todayInTimeZone(), -DISPATCH_RETENTION_DAYS);
+}
+
+function dispatchDateValue(dispatch) {
+  return String(dispatch?.dispatch_date || dispatch?.date || '').slice(0, 10);
+}
+
+function isExpiredDispatch(dispatch, cutoff = dispatchRetentionCutoff()) {
+  const date = dispatchDateValue(dispatch);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= cutoff;
+}
+
+function retentionSystemUser() {
+  return {
+    accessToken: '',
+    email: 'sistema@unigran.local',
+    name: 'Limpeza automatica',
+    role: 'system'
+  };
+}
+
 function n8nWebhookHeaders() {
   const headers = { 'Content-Type': 'application/json' };
   if (N8N_CALENDAR_WEBHOOK_SECRET) {
@@ -112,6 +162,28 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15000) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function postCalendarWebhook(payload) {
+  if (!N8N_CALENDAR_WEBHOOK_URL) {
+    throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
+  }
+
+  const { response, data } = await fetchJsonWithTimeout(N8N_CALENDAR_WEBHOOK_URL, {
+    method: 'POST',
+    headers: n8nWebhookHeaders(),
+    body: JSON.stringify(payload)
+  }, N8N_CALENDAR_WEBHOOK_TIMEOUT_MS);
+
+  if (!response.ok) {
+    throw new Error(`n8n ${response.status}: ${safeWebhookErrorMessage(data)}`);
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('n8n: resposta invalida do webhook. Configure o workflow para responder JSON.');
+  }
+
+  return data;
 }
 
 function safeWebhookErrorMessage(data) {
@@ -215,10 +287,26 @@ async function signIn(email, password) {
     body: JSON.stringify({ email, password })
   });
   if (!data?.access_token) throw new Error('Supabase não retornou sessão de login.');
-  return authorizeSession(data.access_token);
+  return authorizeSession(data.access_token, {
+    refreshToken: data.refresh_token || '',
+    expiresAt: Number(data.expires_at || 0)
+  });
 }
 
-async function authorizeSession(accessToken) {
+async function refreshSession(refreshToken) {
+  if (!refreshToken) throw new Error('Sessão expirada. Entre novamente.');
+  const data = await supabaseAuthRequest('/token?grant_type=refresh_token', {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken })
+  });
+  if (!data?.access_token) throw new Error('Supabase não retornou uma nova sessão.');
+  return authorizeSession(data.access_token, {
+    refreshToken: data.refresh_token || refreshToken,
+    expiresAt: Number(data.expires_at || 0)
+  });
+}
+
+async function authorizeSession(accessToken, authSession = {}) {
   if (!accessToken) throw new Error('Sessão não informada');
   const user = await supabaseAuthRequest('/user', {
     method: 'GET',
@@ -239,6 +327,8 @@ async function authorizeSession(accessToken) {
 
   return {
     accessToken,
+    refreshToken: authSession.refreshToken || '',
+    expiresAt: Number(authSession.expiresAt || 0),
     email,
     name: allowed[0].name || '',
     role: allowed[0].role || 'user'
@@ -309,79 +399,6 @@ function fromDbDispatch(item) {
   };
 }
 
-function padNumber(value) {
-  return String(value).padStart(2, '0');
-}
-
-function normalizeTime(value) {
-  const match = String(value || '').match(/^(\d{2}):(\d{2})(?::\d{2})?$/);
-  return match ? `${match[1]}:${match[2]}` : '09:00';
-}
-
-function addMinutesToLocalDateTime(dateValue, timeValue, minutes) {
-  const [year, month, day] = dateValue.split('-').map(Number);
-  const [hour, minute] = normalizeTime(timeValue).split(':').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute + minutes));
-  return `${date.getUTCFullYear()}-${padNumber(date.getUTCMonth() + 1)}-${padNumber(date.getUTCDate())}T${padNumber(date.getUTCHours())}:${padNumber(date.getUTCMinutes())}:00`;
-}
-
-function calendarDateTime(dispatch) {
-  const time = normalizeTime(dispatch.time || '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dispatch.date)) return null;
-  return {
-    dateTime: `${dispatch.date}T${time}:00`,
-    timeZone: 'America/Campo_Grande'
-  };
-}
-
-function googleCalendarColorId(channel) {
-  if (channel === 'whatsapp') return '10';
-  if (channel === 'html_email') return '3';
-  return '9';
-}
-
-function toN8nCalendarEvent(dispatch, base) {
-  const start = calendarDateTime(dispatch);
-  const title = dispatch.templateName || dispatch.campaign || 'Disparo';
-  const eventId = dispatch.googleCalendarEventId || '';
-  return {
-    sourceId: dispatch.id,
-    templateId: dispatch.id,
-    templateName: dispatch.templateName || '',
-    googleEventId: eventId,
-    id: eventId,
-    colorId: googleCalendarColorId(dispatch.channel || 'email'),
-    summary: title,
-    description: [
-      `ID do template: ${dispatch.id}`,
-      dispatch.templateName ? `Template: ${dispatch.templateName}` : '',
-      dispatch.description,
-      dispatch.subject ? `Assunto: ${dispatch.subject}` : '',
-      dispatch.audience ? `Publico: ${dispatch.audience}` : '',
-      dispatch.responsible ? `Responsavel: ${dispatch.responsible}` : '',
-      base?.mainBase ? `Base: ${base.mainBase}` : ''
-    ].filter(Boolean).join('\n'),
-    start,
-    end: start ? {
-      dateTime: addMinutesToLocalDateTime(dispatch.date, dispatch.time || '', 60),
-      timeZone: 'America/Campo_Grande'
-    } : null,
-    extendedProperties: {
-      private: {
-        source: 'unigran-email-planner',
-        dispatchId: dispatch.id,
-        googleEventId: eventId,
-        status: dispatch.status,
-        channel: dispatch.channel || 'email',
-        campaign: dispatch.campaign || '',
-        audience: dispatch.audience || '',
-        responsible: dispatch.responsible || ''
-      }
-    },
-    raw: dispatch
-  };
-}
-
 function toDbBase(item) {
   return {
     id: item.id,
@@ -408,6 +425,13 @@ function fromDbBase(item) {
     notes: item.notes || '',
     spreadsheetAttachment: item.spreadsheet_attachment || null
   };
+}
+
+function assertReadyDispatch(dispatch) {
+  const missing = missingReadyDispatchFields(dispatch);
+  if (missing.length) {
+    throw new Error(`Complete o disparo antes de marcar como Pronto para disparo: ${missing.join(', ')}.`);
+  }
 }
 
 function toDbOption(name) {
@@ -448,7 +472,11 @@ function revisionFromRows(groups) {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
-async function loadState(accessToken) {
+async function loadState(accessToken, options = {}) {
+  if (options.cleanupUser) {
+    await cleanupExpiredDispatches(options.cleanupUser);
+  }
+
   const [dispatches, bases, campaigns, audiences, responsibles] = await Promise.all([
     supabaseRequest(TABLES.dispatches, '?select=*&order=dispatch_date.asc', { accessToken }),
     supabaseRequest(TABLES.bases, '?select=*&order=campaign.asc', { accessToken }),
@@ -471,26 +499,39 @@ async function loadState(accessToken) {
   };
 }
 
-async function sendCalendarWebhook(body, user) {
-  if (!N8N_CALENDAR_WEBHOOK_URL) {
-    throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
-  }
+async function loadCalendarContext(dispatchId, accessToken) {
+  const encodedDispatchId = encodeURIComponent(dispatchId);
+  const [selectedDispatches, dispatches, bases, campaigns, audiences, responsibles] = await Promise.all([
+    supabaseRequest(TABLES.dispatches, `?select=*&id=eq.${encodedDispatchId}&limit=1`, { accessToken }),
+    supabaseRequest(TABLES.dispatches, '?select=id,updated_at,created_at,status', { accessToken }),
+    supabaseRequest(TABLES.bases, '?select=id,main_base,updated_at,created_at', { accessToken }),
+    optionalSupabaseList(TABLES.campaigns, '?select=id,name,updated_at,created_at&active=eq.true', accessToken),
+    optionalSupabaseList(TABLES.audiences, '?select=id,name,updated_at,created_at&active=eq.true', accessToken),
+    optionalSupabaseList(TABLES.responsibles, '?select=id,name,updated_at,created_at&active=eq.true', accessToken)
+  ]);
 
-  const dispatchId = String(body.dispatchId || '').trim();
-  const action = String(body.action || 'upsert').trim().toLowerCase();
-  if (!dispatchId) throw new Error('Informe o disparo que sera enviado ao Google Calendar.');
-  if (!['upsert', 'delete'].includes(action)) throw new Error('Ação de Google Calendar inválida.');
+  const dispatchRow = selectedDispatches?.[0];
+  const baseRow = dispatchRow?.base_rule_id
+    ? bases.find(item => item.id === dispatchRow.base_rule_id)
+    : undefined;
 
-  const state = await loadState(user.accessToken);
-  const basesById = new Map(state.bases.map(base => [base.id, base]));
-  const dispatch = state.dispatches.find(item => item.id === dispatchId);
-  if (!dispatch) throw new Error('Disparo nao encontrado.');
-  if (action === 'upsert' && dispatch.status !== 'Pronto para disparo') {
-    throw new Error('Apenas disparos com status Pronto para disparo podem ser enviados ao Google Calendar.');
-  }
-  const event = toN8nCalendarEvent(dispatch, basesById.get(dispatch.baseId));
+  return {
+    dispatchRow,
+    baseRow,
+    revisionRows: { dispatches, bases, campaigns, audiences, responsibles }
+  };
+}
 
-  const payload = {
+function revisionAfterDispatchUpdate(groups, updatedDispatch) {
+  return revisionFromRows({
+    ...groups,
+    dispatches: groups.dispatches.map(item => item.id === updatedDispatch.id ? updatedDispatch : item)
+  });
+}
+
+function calendarWebhookPayload(action, dispatch, base, user) {
+  const event = toN8nCalendarEvent(dispatch, base);
+  return {
     source: 'unigran-email-planner',
     action,
     calendarEventId: event.googleEventId,
@@ -504,40 +545,75 @@ async function sendCalendarWebhook(body, user) {
     event,
     events: [event]
   };
+}
 
-  const { response, data } = await fetchJsonWithTimeout(N8N_CALENDAR_WEBHOOK_URL, {
-    method: 'POST',
-    headers: n8nWebhookHeaders(),
-    body: JSON.stringify(payload)
-  }, N8N_CALENDAR_WEBHOOK_TIMEOUT_MS);
+async function deleteDispatchCalendarEvent(dispatch, user, base) {
+  if (!dispatch.googleCalendarEventId) return;
+  await postCalendarWebhook(calendarWebhookPayload('delete', dispatch, base, user));
+}
 
-  if (!response.ok) {
-    throw new Error(`n8n ${response.status}: ${safeWebhookErrorMessage(data)}`);
+async function deleteDispatchCalendarEvents(dispatches, user, basesById = new Map()) {
+  for (const dispatch of dispatches) {
+    await deleteDispatchCalendarEvent(dispatch, user, basesById.get(dispatch.baseId));
+  }
+}
+
+async function sendCalendarWebhook(body, user) {
+  if (!N8N_CALENDAR_WEBHOOK_URL) {
+    throw new Error('Webhook do n8n nao configurado. Defina N8N_CALENDAR_WEBHOOK_URL no .env.');
   }
 
-  if (!data || typeof data !== 'object') {
-    throw new Error('n8n: resposta invalida do webhook. Configure o workflow para responder JSON.');
+  const dispatchId = String(body.dispatchId || '').trim();
+  const action = String(body.action || 'upsert').trim().toLowerCase();
+  if (!dispatchId) throw new Error('Informe o disparo que sera enviado ao Google Calendar.');
+  if (!['upsert', 'delete'].includes(action)) throw new Error('Ação de Google Calendar inválida.');
+
+  const startedAt = Date.now();
+  const context = await loadCalendarContext(dispatchId, user.accessToken);
+  const contextLoadedAt = Date.now();
+  const dispatch = context.dispatchRow ? fromDbDispatch(context.dispatchRow) : undefined;
+  if (!dispatch) throw new Error('Disparo nao encontrado.');
+  if (action === 'upsert' && dispatch.status !== 'Pronto para disparo') {
+    throw new Error('Apenas disparos com status Pronto para disparo podem ser enviados ao Google Calendar.');
   }
+  if (action === 'upsert') {
+    assertReadyDispatch(dispatch);
+  }
+  const base = context.baseRow ? fromDbBase(context.baseRow) : undefined;
+  const data = await postCalendarWebhook(calendarWebhookPayload(action, dispatch, base, user));
 
   const returnedEventId = String(data?.eventId || data?.googleEventId || '').trim();
   if (action === 'upsert' && !returnedEventId) {
     throw new Error('O n8n não retornou o ID real do evento criado/atualizado. Importe o workflow v4 com o nó Respond to Webhook.');
   }
+  const webhookFinishedAt = Date.now();
 
   const nextEventId = action === 'delete' ? '' : returnedEventId;
-  await supabaseRequest(TABLES.dispatches, `?id=eq.${encodeURIComponent(dispatch.id)}`, {
+  const updatedDispatches = await supabaseRequest(TABLES.dispatches, `?id=eq.${encodeURIComponent(dispatch.id)}&select=id,updated_at,created_at,status`, {
     method: 'PATCH',
-    headers: { Prefer: 'return=minimal' },
+    headers: { Prefer: 'return=representation' },
     body: JSON.stringify({ google_calendar_event_id: nextEventId || null }),
     accessToken: user.accessToken
   });
+  const updatedDispatch = updatedDispatches?.[0];
+  if (!updatedDispatch) {
+    throw new Error('Supabase nao confirmou a atualizacao do disparo apos sincronizar o calendario.');
+  }
+  const revision = revisionAfterDispatchUpdate(context.revisionRows, updatedDispatch);
+  const finishedAt = Date.now();
 
-  const refreshedState = await loadState(user.accessToken);
+  console.info('[calendar-sync]', {
+    action,
+    contextMs: contextLoadedAt - startedAt,
+    webhookMs: webhookFinishedAt - contextLoadedAt,
+    persistenceMs: finishedAt - webhookFinishedAt,
+    totalMs: finishedAt - startedAt
+  });
 
   return {
     sent: 1,
     eventId: nextEventId,
-    revision: refreshedState.revision,
+    revision,
     response: data
   };
 }
@@ -576,6 +652,55 @@ function postgrestList(values) {
     .join(',');
 }
 
+async function deleteRowsByIds(table, ids, accessToken) {
+  if (!ids.length) return;
+  await supabaseRequest(table, `?id=in.(${encodeURIComponent(postgrestList(ids))})`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+    accessToken
+  });
+}
+
+async function cleanupExpiredDispatches(user) {
+  const cutoff = dispatchRetentionCutoff();
+  if (!cutoff) return { deleted: 0, cutoff };
+  const accessToken = user.accessToken || '';
+
+  const expiredRows = await supabaseRequest(
+    TABLES.dispatches,
+    `?select=*&dispatch_date=lte.${encodeURIComponent(cutoff)}&order=dispatch_date.asc`,
+    { accessToken }
+  );
+  if (!expiredRows.length) return { deleted: 0, cutoff };
+
+  const expiredDispatches = expiredRows.map(fromDbDispatch);
+  const baseIds = [...new Set(expiredDispatches.map(item => item.baseId).filter(Boolean))];
+  const baseRows = baseIds.length
+    ? await supabaseRequest(TABLES.bases, `?select=*&id=in.(${encodeURIComponent(postgrestList(baseIds))})`, { accessToken })
+    : [];
+  const basesById = new Map(baseRows.map(item => [item.id, fromDbBase(item)]));
+
+  await deleteDispatchCalendarEvents(expiredDispatches, user, basesById);
+  await deleteRowsByIds(TABLES.dispatches, expiredDispatches.map(item => item.id), accessToken);
+
+  console.info('[dispatch-retention]', {
+    cutoff,
+    deleted: expiredDispatches.length,
+    withCalendarEvent: expiredDispatches.filter(item => item.googleCalendarEventId).length
+  });
+
+  return { deleted: expiredDispatches.length, cutoff };
+}
+
+async function runRetentionSweep() {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return;
+  try {
+    await cleanupExpiredDispatches(retentionSystemUser());
+  } catch (error) {
+    console.error('[dispatch-retention]', error.message || error);
+  }
+}
+
 async function deleteMissingRows(table, ids, accessToken) {
   if (!ids.length) {
     await clearTable(table, accessToken);
@@ -600,7 +725,8 @@ async function deleteCatalogRows(deletedCatalogs, accessToken) {
   }
 }
 
-async function saveState(state, accessToken) {
+async function saveState(state, user) {
+  const accessToken = user.accessToken;
   if (
     !Array.isArray(state.dispatches) ||
     !Array.isArray(state.bases) ||
@@ -617,10 +743,23 @@ async function saveState(state, accessToken) {
   }
 
   const bases = state.bases.map(toDbBase);
+  const basesById = new Map(state.bases.map(base => [base.id, base]));
+  const cutoff = dispatchRetentionCutoff();
+  const retainedStateDispatches = state.dispatches.filter(item => !isExpiredDispatch(item, cutoff));
+  for (const dispatch of retainedStateDispatches) {
+    if (shouldValidateReadiness(dispatch.status)) {
+      assertReadyDispatch(dispatch);
+    }
+  }
+  const retainedIds = new Set(retainedStateDispatches.map(item => item.id));
+  const dispatchesToDelete = current.dispatches.filter(item => !retainedIds.has(item.id) || isExpiredDispatch(item, cutoff));
+
+  await deleteDispatchCalendarEvents(dispatchesToDelete, user, basesById);
+
   const currentCalendarIds = new Map(
     current.dispatches.map(item => [item.id, item.googleCalendarEventId || ''])
   );
-  const dispatches = state.dispatches.map(item => toDbDispatch({
+  const dispatches = retainedStateDispatches.map(item => toDbDispatch({
     ...item,
     googleCalendarEventId: item.googleCalendarEventId || currentCalendarIds.get(item.id) || ''
   }));
@@ -708,6 +847,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/auth/refresh') {
+      const body = await readJsonBody(req);
+      const refreshToken = String(body.refreshToken || body.refresh_token || '');
+      sendJson(res, 200, await refreshSession(refreshToken));
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/auth/me') {
       sendJson(res, 200, await requireAuthorizedUser(req));
       return;
@@ -716,7 +862,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const user = await requireAuthorizedUser(req);
       sendJson(res, 200, {
-        ...(await loadState(user.accessToken)),
+        ...(await loadState(user.accessToken, { cleanupUser: user })),
         database: 'supabase'
       });
       return;
@@ -725,9 +871,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT' && url.pathname === '/api/state') {
       const user = await requireAuthorizedUser(req);
       const state = await readJsonBody(req);
-      await saveState(state, user.accessToken);
+      await saveState(state, user);
       sendJson(res, 200, {
-        ...(await loadState(user.accessToken)),
+        ...(await loadState(user.accessToken, { cleanupUser: user })),
         database: 'supabase'
       });
       return;
@@ -762,4 +908,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Aplicacao rodando em http://0.0.0.0:${PORT}`);
   console.log(`Banco ativo: Supabase`);
+  runRetentionSweep();
 });
+
+setInterval(runRetentionSweep, RETENTION_SWEEP_INTERVAL_MS).unref();
