@@ -1,5 +1,5 @@
 import type { Dispatch } from '../../types';
-import { calendarDays, channelName, statusClass } from '../../utils/app';
+import { calendarDays, channelName, dispatchTime, statusClass } from '../../utils/app';
 import { todayISO } from '../../logic';
 
 export function CalendarView({ month, dispatches, onView, onDayView, onCreate }: {
@@ -54,7 +54,7 @@ export function CalendarView({ month, dispatches, onView, onDayView, onCreate }:
                   }}
                   title={`${channelName(dispatch.channel || 'email')} - ${dispatch.campaign || 'Sem campanha'}`}
                 >
-                  <span><i aria-hidden="true" />{dispatch.time || '--:--'}</span>
+                  <span><i aria-hidden="true" />{dispatchTime(dispatch.time)}</span>
                   <strong title={dispatch.campaign || dispatch.templateName || 'Sem campanha'}>{dispatch.campaign || dispatch.templateName || 'Sem campanha'}</strong>
                   <small>{channelName(dispatch.channel || 'email')}</small>
                 </button>
@@ -76,10 +76,11 @@ export function CalendarView({ month, dispatches, onView, onDayView, onCreate }:
   );
 }
 
-export function CalendarDayDetails({ dispatches, onView, onEdit }: {
+export function CalendarDayDetails({ dispatches, onView, onEdit, onDelete }: {
   dispatches: Dispatch[];
   onView: (dispatch: Dispatch) => void;
   onEdit: (dispatch: Dispatch) => void;
+  onDelete: (dispatch: Dispatch) => void;
 }) {
   if (!dispatches.length) return <div className="empty">Nenhum disparo neste dia.</div>;
   return (
@@ -87,7 +88,7 @@ export function CalendarDayDetails({ dispatches, onView, onEdit }: {
       {dispatches.map(dispatch => (
         <div className={`dayDispatchItem ${dispatch.channel || 'email'}`} key={dispatch.id}>
           <div className="dayDispatchTime">
-            <strong>{dispatch.time || '--:--'}</strong>
+            <strong>{dispatchTime(dispatch.time)}</strong>
             <span>{channelName(dispatch.channel || 'email')}</span>
           </div>
           <div className="dayDispatchInfo">
@@ -103,10 +104,10 @@ export function CalendarDayDetails({ dispatches, onView, onEdit }: {
           <div className="actions">
             <button type="button" onClick={() => onView(dispatch)}>Ver completo</button>
             <button type="button" onClick={() => onEdit(dispatch)}>Editar</button>
+            <button type="button" className="danger" onClick={() => onDelete(dispatch)}>Excluir</button>
           </div>
         </div>
       ))}
     </div>
   );
 }
-

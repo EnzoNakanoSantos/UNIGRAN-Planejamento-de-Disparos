@@ -150,6 +150,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [calendarDeleteTarget, setCalendarDeleteTarget] = useState<Dispatch | null>(null);
+  const [dispatchDeleteTarget, setDispatchDeleteTarget] = useState<Dispatch | null>(null);
   const [baseDeleteTarget, setBaseDeleteTarget] = useState<BaseRule | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -215,7 +216,7 @@ export default function App() {
   }, [feedback]);
 
   useEffect(() => {
-    if (!modal && !calendarDeleteTarget && !baseDeleteTarget && !pendingDiscardAction) return;
+    if (!modal && !calendarDeleteTarget && !dispatchDeleteTarget && !baseDeleteTarget && !pendingDiscardAction) return;
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (pendingDiscardAction) {
@@ -226,6 +227,10 @@ export default function App() {
         setCalendarDeleteTarget(null);
         return;
       }
+      if (dispatchDeleteTarget) {
+        setDispatchDeleteTarget(null);
+        return;
+      }
       if (baseDeleteTarget) {
         setBaseDeleteTarget(null);
         return;
@@ -234,7 +239,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [modal, calendarDeleteTarget, baseDeleteTarget, pendingDiscardAction, editingDispatch]);
+  }, [modal, calendarDeleteTarget, dispatchDeleteTarget, baseDeleteTarget, pendingDiscardAction, editingDispatch]);
 
   const isDispatchDirty = modal === 'dispatch' && hasUnsavedDispatchChanges(editingDispatch, initialDispatchSnapshotRef.current);
 
@@ -979,6 +984,14 @@ export default function App() {
     await persist({ ...state, dispatches: state.dispatches.filter(item => !selected.has(item.id)) });
   }
 
+  async function confirmDeleteDispatch() {
+    if (!dispatchDeleteTarget) return;
+    const deleted = await persist({ ...state, dispatches: state.dispatches.filter(item => item.id !== dispatchDeleteTarget.id) });
+    if (!deleted) return;
+    setDispatchDeleteTarget(null);
+    if (viewingDispatch?.id === dispatchDeleteTarget.id) closeModal();
+  }
+
   function requestDeleteBase(id: string) {
     const target = state.bases.find(item => item.id === id);
     if (target) setBaseDeleteTarget(target);
@@ -1677,6 +1690,7 @@ export default function App() {
               >
                 Remover do Google Calendar
               </button>
+              <button type="button" className="btn dangerStrong" onClick={() => setDispatchDeleteTarget(viewingDispatch)}>Excluir disparo</button>
               <button type="button" className="btn primary" onClick={() => openDispatch(viewingDispatch)}>Editar disparo</button>
             </div>
           </div>
@@ -1691,6 +1705,7 @@ export default function App() {
               dispatches={viewingDayDispatches}
               onView={dispatch => openDispatchDetails(dispatch, true)}
               onEdit={dispatch => openDispatch(dispatch)}
+              onDelete={dispatch => setDispatchDeleteTarget(dispatch)}
             />
             <div className="modalFoot">
               <button type="button" className="btn primary" onClick={closeModal}>Fechar</button>
@@ -1776,7 +1791,7 @@ export default function App() {
                 O disparo continuará salvo no aplicativo.
               </p>
               <div className="calendarDeleteMeta">
-                <span>{fmtDate(calendarDeleteTarget.date)}{calendarDeleteTarget.time ? ` às ${calendarDeleteTarget.time}` : ''}</span>
+                <span>{fmtDate(calendarDeleteTarget.date)}{calendarDeleteTarget.time ? ` às ${dispatchTime(calendarDeleteTarget.time)}` : ''}</span>
                 <span>{channelName(calendarDeleteTarget.channel || 'email')}</span>
               </div>
             </div>
@@ -1798,6 +1813,16 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {dispatchDeleteTarget && (
+        <ConfirmDialog
+          title="Excluir disparo?"
+          text={`O disparo ${dispatchDisplayName(dispatchDeleteTarget) || 'selecionado'} será removido do planejamento.`}
+          safeLabel="Cancelar"
+          confirmLabel="Confirmar exclusão"
+          onSafe={() => setDispatchDeleteTarget(null)}
+          onConfirm={confirmDeleteDispatch}
+        />
       )}
       {baseDeleteTarget && (
         <ConfirmDialog

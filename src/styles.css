@@ -943,7 +943,7 @@ table {
 }
 
 .dispatchTable .colStatus {
-  width: 170px;
+  width: 200px;
 }
 
 .dispatchTable .colValidation {
@@ -1071,9 +1071,11 @@ tbody tr:hover {
   min-width: 150px;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 8px 30px 8px 12px;
+  padding: 7px 20px;
   font-size: 13px;
   font-weight: 900;
+  text-align: center;
+  text-align-last: center;
   outline: 0;
   appearance: none;
   background-repeat: no-repeat;

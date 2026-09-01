@@ -1,7 +1,7 @@
 import { AlertTriangle, Calendar, CheckCircle2, Clock, Plus, RotateCcw, Send } from 'lucide-react';
 import type { BaseRule, Dispatch, Tab } from '../../types';
 import { addDaysISO, dispatchValidation, fmtDate, todayISO } from '../../logic';
-import { channelName, dispatchDisplayName } from '../../utils/app';
+import { channelName, dispatchDisplayName, dispatchTime } from '../../utils/app';
 
 export function OverviewDashboard({ dispatches, bases, userName, onNavigate, onNew, onView }: {
   dispatches: Dispatch[];
@@ -61,7 +61,7 @@ export function OverviewDashboard({ dispatches, bases, userName, onNavigate, onN
             {attention.map(({ dispatch, validation }) => (
               <button className={`overviewIssue ${validation.level}`} key={dispatch.id} onClick={() => onView(dispatch)}>
                 <i>{validation.level === 'red' ? <AlertTriangle /> : <RotateCcw />}</i>
-                <span><strong>{dispatchDisplayName(dispatch) || 'Disparo sem nome'}</strong><em>{validation.issues[0] || 'Conferir cadastro'}</em><small>{channelName(dispatch.channel || 'email')} • {fmtDate(dispatch.date)}{dispatch.time ? `, ${dispatch.time}` : ''}</small></span>
+                <span><strong>{dispatchDisplayName(dispatch) || 'Disparo sem nome'}</strong><em>{validation.issues[0] || 'Conferir cadastro'}</em><small>{channelName(dispatch.channel || 'email')} • {fmtDate(dispatch.date)}{dispatch.time ? `, ${dispatchTime(dispatch.time)}` : ''}</small></span>
                 <b>Corrigir</b>
               </button>
             ))}
@@ -74,7 +74,7 @@ export function OverviewDashboard({ dispatches, bases, userName, onNavigate, onN
             {!upcoming.length && <div className="overviewEmpty">Nenhum disparo nos próximos 15 dias.</div>}
             {upcoming.slice(0, 6).map(dispatch => (
               <button key={dispatch.id} onClick={() => onView(dispatch)}>
-                <time>{fmtDate(dispatch.date).slice(0, 5)}<small>{dispatch.time || '--:--'}</small></time>
+                <time>{fmtDate(dispatch.date).slice(0, 5)}<small>{dispatchTime(dispatch.time)}</small></time>
                 <span className={`overviewChannel ${dispatch.channel || 'email'}`}>{channelName(dispatch.channel || 'email')}</span>
                 <strong>{dispatchDisplayName(dispatch) || 'Disparo sem nome'}</strong>
                 <em className={`status ${dispatch.status.toLowerCase().replace(/\s+/g, '-')}`}>● {dispatch.status}</em>

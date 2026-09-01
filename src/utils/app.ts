@@ -142,7 +142,7 @@ export function isoDate(value: string) {
 }
 
 export function dispatchTime(value: string) {
-  return value || '-';
+  return value ? value.split(':').slice(0, 2).join(':') : '-';
 }
 
 export function dispatchSortValue(dispatch: Dispatch, field: DispatchSortField) {
