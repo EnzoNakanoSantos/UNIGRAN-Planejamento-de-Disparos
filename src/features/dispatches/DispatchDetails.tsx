@@ -202,6 +202,8 @@ export function DispatchDetails({ dispatch, base, validation, conflicts, duplica
       <div className="detailGrid compact">
         <DetailItem label="Criado em" value={fmtDate(isoDate(dispatch.createdAt))} />
         <DetailItem label="Bases excluídas" value={base?.excludedBases || 'Nenhuma exclusão configurada'} />
+        <DetailItem label="Atualizado em" value={fmtDate(isoDate(dispatch.updatedAt))} />
+        <DetailItem label="ID do disparo" value={dispatch.id} />
         {dispatch.attachments.length > 0 && (
           <DetailItem label="Anexos" value={<AttachmentPreview attachments={dispatch.attachments} />} wide />
         )}

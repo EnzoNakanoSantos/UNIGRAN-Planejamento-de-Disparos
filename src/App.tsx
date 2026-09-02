@@ -827,7 +827,12 @@ export default function App() {
       setDispatchFieldErrors([]);
       setSuggestedFields(rememberedResponsible ? ['responsavel'] : []);
     };
-    requestDiscardOrRun(run);
+    const baseline = initialDispatchRef.current;
+    const hasChangesBesidesChannel = baseline
+      ? dispatchSnapshot({ ...editingDispatch, channel: baseline.channel }) !== dispatchSnapshot(baseline)
+      : isDispatchDirty;
+    if (hasChangesBesidesChannel) requestDiscardOrRun(run);
+    else run();
   }
 
   function applyDispatchSuggestions(draft: Dispatch) {
@@ -1820,6 +1825,7 @@ export default function App() {
           text={`O disparo ${dispatchDisplayName(dispatchDeleteTarget) || 'selecionado'} será removido do planejamento.`}
           safeLabel="Cancelar"
           confirmLabel="Confirmar exclusão"
+          confirmClassName="btn dangerStrong calendarDeleteButton"
           onSafe={() => setDispatchDeleteTarget(null)}
           onConfirm={confirmDeleteDispatch}
         />
@@ -1830,6 +1836,7 @@ export default function App() {
           text={`A regra ${baseDeleteTarget.campaign || baseDeleteTarget.mainBase || 'selecionada'} será removida. Os disparos vinculados ficarão sem base.`}
           safeLabel="Cancelar"
           confirmLabel="Confirmar exclusão"
+          confirmClassName="btn dangerStrong calendarDeleteButton"
           onSafe={() => setBaseDeleteTarget(null)}
           onConfirm={() => deleteBase(baseDeleteTarget.id)}
         />

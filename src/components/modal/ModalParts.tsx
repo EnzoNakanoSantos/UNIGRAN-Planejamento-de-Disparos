@@ -32,6 +32,7 @@ export function ConfirmDialog({
   text,
   safeLabel,
   confirmLabel,
+  confirmClassName = 'btn dangerStrong',
   onSafe,
   onConfirm
 }: {
@@ -39,6 +40,7 @@ export function ConfirmDialog({
   text: string;
   safeLabel: string;
   confirmLabel: string;
+  confirmClassName?: string;
   onSafe: () => void;
   onConfirm: () => void;
 }) {
@@ -58,8 +60,8 @@ export function ConfirmDialog({
           <p id="confirm-dialog-text">{text}</p>
         </div>
         <div className="confirmDialogActions">
-          <button type="button" className="btn primary" onClick={onSafe}>{safeLabel}</button>
-          <button type="button" className="btn dangerStrong" onClick={onConfirm}>{confirmLabel}</button>
+          <button type="button" className="btn ghost" onClick={onSafe}>{safeLabel}</button>
+          <button type="button" className={confirmClassName} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>

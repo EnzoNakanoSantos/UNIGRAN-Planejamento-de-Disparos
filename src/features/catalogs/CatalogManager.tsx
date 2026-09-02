@@ -2,6 +2,7 @@ import type { FormEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { fmtDate } from '../../logic';
 import { isoDate, unique } from '../../utils/app';
+import { ConfirmDialog } from '../../components/modal/ModalParts';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
@@ -183,14 +184,15 @@ export function CatalogManager({ title, description, values, dates, onAdd, onUpd
         </div>
       )}
       {confirming && (
-        <div className="confirmStrip">
-          <strong>Remover {selected.length} cadastro(s)?</strong>
-          <span>Registros que usam esses valores ficarão em branco.</span>
-          <div>
-            <button type="button" className="btn ghost small" onClick={() => setConfirming(false)}>Cancelar</button>
-            <button type="button" className="btn dangerStrong small" onClick={confirmRemove}>Confirmar exclusão</button>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="Excluir cadastro(s)?"
+          text={`${selected.length} cadastro(s) serão removido(s). Registros que usam esses valores ficarão em branco.`}
+          safeLabel="Cancelar"
+          confirmLabel="Confirmar exclusão"
+          confirmClassName="btn dangerStrong calendarDeleteButton"
+          onSafe={() => setConfirming(false)}
+          onConfirm={confirmRemove}
+        />
       )}
       <div className="catalogList">
         {!values.length && <div className="empty smallEmpty">Nada cadastrado ainda.</div>}

@@ -27,7 +27,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "DM Sans", Arial, Helvetica, sans-serif;
+  font-family: "Google Sans", sans-serif;
 }
 
 button,
